@@ -3,7 +3,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -972,9 +972,34 @@ public class Const {
   public static final String KETTLE_BATCHING_ROWSET = "KETTLE_BATCHING_ROWSET";
 
   /**
+   * Set this variable to limit max number of files the Text File Output step can have open at one time.
+   */
+  public static final String KETTLE_FILE_OUTPUT_MAX_STREAM_COUNT = "KETTLE_FILE_OUTPUT_MAX_STREAM_COUNT";
+
+  /**
+   * This variable contains the number of milliseconds between flushes of all open files in the Text File Output step.
+   */
+  public static final String KETTLE_FILE_OUTPUT_MAX_STREAM_LIFE = "KETTLE_FILE_OUTPUT_MAX_STREAM_LIFE";
+
+  /**
    * Set this variable to Y to disable standard Kettle logging to the console. (stdout)
    */
   public static final String KETTLE_DISABLE_CONSOLE_LOGGING = "KETTLE_DISABLE_CONSOLE_LOGGING";
+
+  /**
+   * Set this variable to with the intended repository name ( in repositories.xml )
+   */
+  public static final String KETTLE_REPOSITORY = "KETTLE_REPOSITORY";
+
+  /**
+   * Set this variable to with the intended username to pass as repository credentials
+   */
+  public static final String KETTLE_USER = "KETTLE_USER";
+
+  /**
+   * Set this variable to with the intended password to pass as repository credentials
+   */
+  public static final String KETTLE_PASSWORD = "KETTLE_PASSWORD";
 
   /**
    * The XML file that contains the list of native Kettle job entries
@@ -1063,7 +1088,7 @@ public class Const {
   /**
    * Variable that is responsible for checking empty field names and types.
    */
-  public static final String ALLOW_EMPTY_FIELD_NAMES_AND_TYPES = "ALLOW_EMPTY_FIELD_NAMES_AND_TYPES";
+  public static final String KETTLE_ALLOW_EMPTY_FIELD_NAMES_AND_TYPES = "KETTLE_ALLOW_EMPTY_FIELD_NAMES_AND_TYPES";
 
   /**
    * Set this variable to false to preserve global log variables defined in transformation / job Properties -> Log panel.
@@ -1137,9 +1162,19 @@ public class Const {
   public static final String KETTLE_CARTE_JETTY_RES_MAX_IDLE_TIME = "KETTLE_CARTE_JETTY_RES_MAX_IDLE_TIME";
 
   /**
+   * A variable to configure refresh for carte job/trans status page
+   */
+  public static final String KETTLE_CARTE_REFRESH_STATUS = "KETTLE_CARTE_REFRESH_STATUS";
+
+  /**
    * A variable to configure s3vfs to use a temporary file on upload data to S3 Amazon."
    */
   public static final String S3VFS_USE_TEMPORARY_FILE_ON_UPLOAD_DATA = "s3.vfs.useTempFileOnUploadData";
+
+  /**
+   * A variable to configure Tab size"
+   */
+  public static final String KETTLE_MAX_TAB_LENGTH = "KETTLE_MAX_TAB_LENGTH";
 
   /**
    * A variable to configure VFS USER_DIR_IS_ROOT option: should be "true" or "false"

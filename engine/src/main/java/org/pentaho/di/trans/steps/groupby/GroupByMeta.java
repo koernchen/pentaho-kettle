@@ -530,6 +530,11 @@ public class GroupByMeta extends BaseStepMeta implements StepMetaInterface {
           }
           v.setOrigin( origin );
           v.setLength( length, precision );
+
+          if ( subj != null ) {
+            v.setConversionMask( subj.getConversionMask() );
+          }
+
           fields.addValueMeta( v );
         }
       }

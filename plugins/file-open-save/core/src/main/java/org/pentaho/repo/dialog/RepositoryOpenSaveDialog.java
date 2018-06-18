@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 Hitachi Vantara. All rights reserved.
+ * Copyright 2017-2018 Hitachi Vantara. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import org.pentaho.repo.controller.RepositoryBrowserController;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLEncoder;
 import java.util.Properties;
 
 /**
@@ -58,7 +59,17 @@ public class RepositoryOpenSaveDialog extends ThinDialog {
     super( shell, width, height );
   }
 
-  public void open( Repository repository, String directory, String state, String filter, String origin ) {
+  public void open( Repository repository, String directory, String state, String title, String filter, String origin ) {
+    open( repository, directory, state, title, filter, origin, null, "" );
+  }
+
+  public void open( Repository repository, String directory, String state, String title, String filter, String origin,
+                    String filename, String fileType ) {
+    try {
+      directory = URLEncoder.encode( directory, "UTF-8" );
+    } catch ( Exception e ) {
+      // ignore if fails
+    }
     RepositoryBrowserController.repository = repository;
     StringBuilder clientPath = new StringBuilder();
     clientPath.append( getClientPath() );
@@ -68,7 +79,12 @@ public class RepositoryOpenSaveDialog extends ThinDialog {
     clientPath.append( !Utils.isEmpty( filter ) ? "filter=" + filter : "" );
     clientPath.append( !Utils.isEmpty( filter ) ? "&" : "" );
     clientPath.append( !Utils.isEmpty( origin ) ? "origin=" + origin : "" );
-    super.createDialog( StringUtils.capitalize( state ), getRepoURL( clientPath.toString() ), OPTIONS, LOGO );
+    clientPath.append( !Utils.isEmpty( origin ) ? "&" : "" );
+    clientPath.append( null != filename ? "filename=" + filename : "" );
+    clientPath.append( null != filename ? "&" : "" );
+    clientPath.append( null != fileType ? "fileType=" + fileType : "" );
+    super.createDialog( title != null ? title : StringUtils.capitalize( state ), getRepoURL( clientPath.toString() ),
+      OPTIONS, LOGO );
     super.dialog.setMinimumSize( 545, 458 );
 
     new BrowserFunction( browser, "close" ) {

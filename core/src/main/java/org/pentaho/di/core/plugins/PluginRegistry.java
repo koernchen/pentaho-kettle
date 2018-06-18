@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -81,34 +81,25 @@ public class PluginRegistry {
   public static final LogChannelInterface log = new LogChannel( "PluginRegistry", true );
 
   // the list of plugins
-  private final Map<Class<? extends PluginTypeInterface>, Set<PluginInterface>> pluginMap;
+  private final Map<Class<? extends PluginTypeInterface>, Set<PluginInterface>> pluginMap = new HashMap<>();
 
-  private final Map<Class<? extends PluginTypeInterface>, Map<PluginInterface, URLClassLoader>> classLoaderMap;
-  private final Map<URLClassLoader, Set<PluginInterface>> inverseClassLoaderLookup;
-  private final Map<String, URLClassLoader> classLoaderGroupsMap;
-  private final Map<String, URLClassLoader> folderBasedClassLoaderMap;
+  private final Map<Class<? extends PluginTypeInterface>, Map<PluginInterface, URLClassLoader>> classLoaderMap = new HashMap<>();
+  private final Map<URLClassLoader, Set<PluginInterface>> inverseClassLoaderLookup = new HashMap<>();
+  private final Map<String, URLClassLoader> classLoaderGroupsMap = new HashMap<>();
+  private final Map<String, URLClassLoader> folderBasedClassLoaderMap = new HashMap<>();
 
-  private final Map<Class<? extends PluginTypeInterface>, Set<String>> categoryMap;
-  private final Map<PluginInterface, String[]> parentClassloaderPatternMap;
+  private final Map<Class<? extends PluginTypeInterface>, Set<String>> categoryMap = new HashMap<>();
+  private final Map<PluginInterface, String[]> parentClassloaderPatternMap = new HashMap<>();
 
-  private final Map<Class<? extends PluginTypeInterface>, Set<PluginTypeListener>> listeners;
+  private final Map<Class<? extends PluginTypeInterface>, Set<PluginTypeListener>> listeners = new HashMap<>();
 
-  private final ReentrantReadWriteLock lock;
+  private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
 
   /**
    * Initialize the registry, keep private to keep this a singleton
    */
   private PluginRegistry() {
-    pluginMap = new HashMap<>();
-    classLoaderMap = new HashMap<>();
-    inverseClassLoaderLookup = new HashMap<>();
-    categoryMap = new HashMap<>();
-    classLoaderGroupsMap = new HashMap<>();
-    parentClassloaderPatternMap = new HashMap<>();
-    lock = new ReentrantReadWriteLock();
-    listeners = new HashMap<>();
-    folderBasedClassLoaderMap = new HashMap<>();
   }
 
   /**
@@ -233,8 +224,7 @@ public class PluginRegistry {
       if ( !Utils.isEmpty( plugin.getCategory() ) ) {
         // Keep categories sorted in the natural order here too!
         //
-        categoryMap.computeIfAbsent( pluginType, k -> new TreeSet<>(
-          getNaturalCategoriesOrderComparator( pluginType ) ) )
+        categoryMap.computeIfAbsent( pluginType, k -> new TreeSet<>( getNaturalCategoriesOrderComparator( pluginType ) ) )
           .add( plugin.getCategory() );
       }
     } finally {
@@ -371,7 +361,7 @@ public class PluginRegistry {
    * Load the class of the type specified for the plugin with the ID specified.
    *
    * @param pluginType the type of plugin
-   * @param pluginId    The plugin id to use
+   * @param pluginId   The plugin id to use
    * @param classType  The type of class to load
    * @return the instantiated class.
    * @throws KettlePluginException
@@ -543,7 +533,6 @@ public class PluginRegistry {
    * @throws KettlePluginException
    */
   public static synchronized void init( boolean keepCache ) throws KettlePluginException {
-
     final PluginRegistry registry = getInstance();
 
     log.snap( Metrics.METRIC_PLUGIN_REGISTRY_REGISTER_EXTENSIONS_START );
@@ -601,19 +590,14 @@ public class PluginRegistry {
       ext.searchForType( pluginType );
     }
 
-    List<String> pluginClassNames = new ArrayList<>();
+    Set<String> pluginClassNames = new HashSet<>();
 
     // Scan for plugin classes to facilitate debugging etc.
     //
     String pluginClasses = EnvUtil.getSystemProperty( Const.KETTLE_PLUGIN_CLASSES );
     if ( !Utils.isEmpty( pluginClasses ) ) {
       String[] classNames = pluginClasses.split( "," );
-
-      for ( String className : classNames ) {
-        if ( !pluginClassNames.contains( className ) ) {
-          pluginClassNames.add( className );
-        }
-      }
+      Collections.addAll( pluginClassNames, classNames );
     }
 
     for ( String className : pluginClassNames ) {
@@ -630,7 +614,7 @@ public class PluginRegistry {
           if ( annotation != null ) {
             // Register this one!
             //
-            pluginType.handlePluginAnnotation( clazz, annotation, new ArrayList<String>(), true, null );
+            pluginType.handlePluginAnnotation( clazz, annotation, new ArrayList<>(), true, null );
             LogChannel.GENERAL.logBasic( "Plugin class "
                 + className + " registered for plugin type '" + pluginType.getName() + "'" );
           } else {
@@ -668,13 +652,11 @@ public class PluginRegistry {
    * @return The ID of the plugin to which this class belongs (checks the plugin class maps)
    */
   public String getPluginId( Object pluginClass ) {
-    for ( Class<? extends PluginTypeInterface> pluginType : getPluginTypes() ) {
-      String id = getPluginId( pluginType, pluginClass );
-      if ( id != null ) {
-        return id;
-      }
-    }
-    return null;
+    return getPluginTypes().stream()
+      .map( pluginType -> getPluginId( pluginType, pluginClass ) )
+      .filter( Objects::nonNull )
+      .findFirst()
+      .orElse( null );
   }
 
   /**
@@ -756,10 +738,7 @@ public class PluginRegistry {
    * @return The plugin with the specified name or null if nothing was found.
    */
   public PluginInterface findPluginWithId( Class<? extends PluginTypeInterface> pluginType, String pluginId ) {
-    return getPlugins( pluginType ).stream()
-      .filter( plugin -> plugin.matches( pluginId ) )
-      .findFirst()
-      .orElse( null );
+    return getPlugin( pluginType, pluginId );
   }
 
   /**
@@ -833,6 +812,8 @@ public class PluginRegistry {
     try {
       if ( plugin.isNativePlugin() ) {
         return (T) Class.forName( className );
+      } else if ( plugin instanceof ClassLoadingPluginInterface ) {
+        return (T) ( (ClassLoadingPluginInterface) plugin ).getClassLoader().loadClass( className );
       } else {
         URLClassLoader ucl;
         lock.writeLock().lock();
@@ -994,11 +975,8 @@ public class PluginRegistry {
   public <T extends PluginTypeInterface> void addPluginListener( Class<T> typeToTrack, PluginTypeListener listener ) {
     lock.writeLock().lock();
     try {
-      Set<PluginTypeListener> list =
-        listeners.computeIfAbsent( typeToTrack, k -> new HashSet<>() );
-      if ( !list.contains( listener ) ) {
-        list.add( listener );
-      }
+      Set<PluginTypeListener> list = listeners.computeIfAbsent( typeToTrack, k -> new HashSet<>() );
+      list.add( listener );
     } finally {
       lock.writeLock().unlock();
     }
@@ -1058,5 +1036,31 @@ public class PluginRegistry {
       lock.readLock().unlock();
     }
     return result;
+  }
+
+  public void reset() {
+    lock.writeLock().lock();
+    try {
+      pluginTypes.clear();
+      extensions.clear();
+      pluginMap.clear();
+      classLoaderMap.clear();
+      classLoaderGroupsMap.clear();
+      folderBasedClassLoaderMap.clear();
+      inverseClassLoaderLookup.forEach( ( key, value ) -> {
+        try {
+          key.close();
+        } catch ( IOException e ) {
+          e.printStackTrace();
+        }
+      } );
+      inverseClassLoaderLookup.clear();
+      categoryMap.clear();
+      parentClassloaderPatternMap.clear();
+      listeners.clear();
+      JarFileCache.getInstance().clear();
+    } finally {
+      lock.writeLock().unlock();
+    }
   }
 }

@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -21,23 +21,27 @@
  ******************************************************************************/
 package org.pentaho.di.trans;
 
+import org.eclipse.jetty.util.ConcurrentHashSet;
 import org.pentaho.di.core.Const;
 import org.pentaho.di.core.Result;
 import org.pentaho.di.core.RowMetaAndData;
 import org.pentaho.di.core.exception.KettleException;
+import org.pentaho.di.core.row.RowMetaInterface;
 import org.pentaho.di.core.util.Utils;
 import org.pentaho.di.i18n.BaseMessages;
 import org.pentaho.di.trans.step.BaseStepData.StepExecutionStatus;
+import org.pentaho.di.trans.step.RowAdapter;
 import org.pentaho.di.trans.step.StepMetaDataCombi;
 import org.pentaho.di.trans.step.StepStatus;
 import org.pentaho.di.trans.steps.TransStepUtil;
-import org.pentaho.di.trans.steps.transexecutor.TransExecutorData;
 import org.pentaho.di.trans.steps.transexecutor.TransExecutorParameters;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 
 /**
  * Will run the given sub-transformation with the rows passed to execute
@@ -45,30 +49,35 @@ import java.util.concurrent.ConcurrentHashMap;
 public class SubtransExecutor {
   private static final Class<?> PKG = SubtransExecutor.class;
   private final Map<String, StepStatus> statuses;
+  private final String subTransName;
   private Trans parentTrans;
   private TransMeta subtransMeta;
   private boolean shareVariables;
-  private TransExecutorData transExecutorData;
   private TransExecutorParameters parameters;
+  private String subStep;
+  private boolean stopped;
+  Set<Trans> running;
 
-  public SubtransExecutor( Trans parentTrans, TransMeta subtransMeta, boolean shareVariables,
-                           TransExecutorData transExecutorData, TransExecutorParameters parameters ) {
+  public SubtransExecutor( String subTransName, Trans parentTrans, TransMeta subtransMeta, boolean shareVariables,
+                           TransExecutorParameters parameters, String subStep ) {
+    this.subTransName = subTransName;
     this.parentTrans = parentTrans;
     this.subtransMeta = subtransMeta;
     this.shareVariables = shareVariables;
-    this.transExecutorData = transExecutorData;
     this.parameters = parameters;
-    this.statuses = new ConcurrentHashMap<>();
+    this.subStep = subStep;
+    this.statuses = new LinkedHashMap<>();
+    this.running = new ConcurrentHashSet<>();
   }
 
   public Optional<Result> execute( List<RowMetaAndData> rows ) throws KettleException {
-    if ( rows.isEmpty() ) {
+    if ( rows.isEmpty() || stopped ) {
       return Optional.empty();
     }
-    this.transExecutorData.groupTimeStart = System.currentTimeMillis();
 
     Trans subtrans = this.createSubtrans();
-    this.transExecutorData.setExecutorTrans( subtrans );
+    running.add( subtrans );
+    parentTrans.addActiveSubTransformation( subTransName, subtrans );
 
     // Pass parameter values
     passParametersToTrans( subtrans, rows.get( 0 ) );
@@ -78,9 +87,27 @@ public class SubtransExecutor {
     subtrans.setPreviousResult( result );
 
     subtrans.prepareExecution( this.parentTrans.getArguments() );
+    List<RowMetaAndData> rowMetaAndData = new ArrayList<>();
+    subtrans.getSteps().stream()
+      .filter( c -> c.step.getStepname().equalsIgnoreCase( subStep ) )
+      .findFirst()
+      .ifPresent( c -> c.step.addRowListener( new RowAdapter() {
+        @Override public void rowWrittenEvent( RowMetaInterface rowMeta, Object[] row ) {
+          rowMetaAndData.add( new RowMetaAndData( rowMeta, row ) );
+        }
+      } ) );
     subtrans.startThreads();
 
     subtrans.waitUntilFinished();
+    updateStatuses( subtrans );
+    running.remove( subtrans );
+
+    Result subtransResult = subtrans.getResult();
+    subtransResult.setRows( rowMetaAndData  );
+    return Optional.of( subtransResult );
+  }
+
+  private synchronized void updateStatuses( Trans subtrans ) {
     List<StepMetaDataCombi> steps = subtrans.getSteps();
     for ( StepMetaDataCombi combi : steps ) {
       StepStatus stepStatus;
@@ -92,12 +119,8 @@ public class SubtransExecutor {
         statuses.put( combi.stepname, stepStatus );
       }
 
-      if ( stepStatus != null ) {
-        stepStatus.setStatusDescription( StepExecutionStatus.STATUS_RUNNING.getDescription() );
-      }
+      stepStatus.setStatusDescription( StepExecutionStatus.STATUS_RUNNING.getDescription() );
     }
-
-    return Optional.of( subtrans.getResult() );
   }
 
   private Trans createSubtrans() {
@@ -130,7 +153,7 @@ public class SubtransExecutor {
         int idx = rowMetaAndData.getRowMeta().indexOfValue( fieldName );
         if ( idx < 0 ) {
           throw new KettleException(
-            BaseMessages.getString( PKG, "TransExecutor.Exception.UnableToFindField", new String[] { fieldName } ) );
+            BaseMessages.getString( PKG, "TransExecutor.Exception.UnableToFindField", fieldName ) );
         }
 
         value = rowMetaAndData.getString( idx, "" );
@@ -149,6 +172,11 @@ public class SubtransExecutor {
   }
 
   public void stop() {
+    stopped = true;
+    for ( Trans subTrans : running ) {
+      subTrans.stopAll();
+    }
+    running.clear();
     for ( Map.Entry<String, StepStatus> entry : statuses.entrySet() ) {
       entry.getValue().setStatusDescription( StepExecutionStatus.STATUS_STOPPED.getDescription() );
     }
@@ -156,5 +184,9 @@ public class SubtransExecutor {
 
   public Map<String, StepStatus> getStatuses() {
     return statuses;
+  }
+
+  public Trans getParentTrans() {
+    return parentTrans;
   }
 }

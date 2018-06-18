@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -33,9 +33,14 @@ import org.pentaho.di.trans.streaming.api.StreamWindow;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+
+/**
+ * A StreamWindow implementation which buffers rows of I by a fixed amount of time and size, executing each batch in a
+ * subtransformation.
+ */
 public class FixedTimeStreamWindow<I extends List> implements StreamWindow<I, Result> {
 
   private final RowMetaInterface rowMeta;
@@ -51,31 +56,25 @@ public class FixedTimeStreamWindow<I extends List> implements StreamWindow<I, Re
     this.batchSize = batchSize;
   }
 
-  @Override public Iterable<Result> buffer( Iterable<I> rowIterator ) {
-    return Observable.fromIterable( rowIterator )
-      .subscribeOn( Schedulers.newThread() )
-      .buffer( millis, TimeUnit.MILLISECONDS, batchSize )
+  @Override public Iterable<Result> buffer( Observable<I> observable ) {
+    Observable<List<I>> buffer = millis > 0
+      ? batchSize > 0 ? observable.buffer( millis, MILLISECONDS, batchSize ) : observable.buffer( millis, MILLISECONDS )
+      : observable.buffer( batchSize );
+    return buffer
+      .observeOn( Schedulers.io() )
       .filter( list -> !list.isEmpty() )
-
-      // future enhancement - this will allow the sendBuffer to be run in a separate thread.
-      //      .flatMap( list -> Observable.just( list )
-      //        .subscribeOn( Schedulers.newThread() )
-      //        .map( this::sendBufferToSubtrans ) )
-      //      .blockingIterable();
-
       .map( this::sendBufferToSubtrans )
+      .takeWhile( result -> result.getNrErrors() == 0 )
       .blockingIterable();
   }
 
   private Result sendBufferToSubtrans( List<I> input ) throws KettleException {
-    System.out.println( "sendBuffer thread:  " + Thread.currentThread() );
-    Optional<Result> result = subtransExecutor.execute(
-      input.stream()
-        .map( row -> row.toArray( new Object[ 0 ] ) )
-        .map( objects -> new RowMetaAndData( rowMeta, objects ) )
-        .collect( Collectors.toList() )
-    );
-    return result.orElseThrow( () -> new KettleException( "Failed to get results" ) ); // TODO messagify
+    final List<RowMetaAndData> rows = input.stream()
+      .map( row -> row.toArray( new Object[ 0 ] ) )
+      .map( objects -> new RowMetaAndData( rowMeta, objects ) )
+      .collect( Collectors.toList() );
+    Optional<Result> optionalRes = subtransExecutor.execute( rows );
+    return optionalRes.orElse( new Result( ) );
   }
 
 }

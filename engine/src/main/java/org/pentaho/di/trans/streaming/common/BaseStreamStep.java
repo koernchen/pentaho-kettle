@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -22,12 +22,16 @@
 
 package org.pentaho.di.trans.streaming.common;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
+import org.pentaho.di.core.CheckResultInterface;
 import org.pentaho.di.core.Result;
 import org.pentaho.di.core.RowMetaAndData;
 import org.pentaho.di.core.exception.KettleException;
 import org.pentaho.di.core.exception.KettleStepException;
+import org.pentaho.di.i18n.BaseMessages;
+import org.pentaho.di.trans.SubtransExecutor;
 import org.pentaho.di.trans.Trans;
 import org.pentaho.di.trans.TransMeta;
 import org.pentaho.di.trans.step.BaseStep;
@@ -35,66 +39,130 @@ import org.pentaho.di.trans.step.StepDataInterface;
 import org.pentaho.di.trans.step.StepMeta;
 import org.pentaho.di.trans.step.StepMetaInterface;
 import org.pentaho.di.trans.step.StepStatus;
+import org.pentaho.di.trans.steps.transexecutor.TransExecutorMeta;
+import org.pentaho.di.trans.steps.transexecutor.TransExecutorParameters;
 import org.pentaho.di.trans.streaming.api.StreamSource;
 import org.pentaho.di.trans.streaming.api.StreamWindow;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
-public class BaseStreamStep<I> extends BaseStep {
+public class BaseStreamStep extends BaseStep {
 
-  protected StreamWindow<I, Result> window;
-  protected StreamSource<I> source;
+  private static final Class<?> PKG = BaseStreamStep.class;
+  private BaseStreamStepMeta stepMeta;
+
+  protected SubtransExecutor subtransExecutor;
+  protected StreamWindow<List<Object>, Result> window;
+  protected StreamSource<List<Object>> source;
 
   public BaseStreamStep( StepMeta stepMeta, StepDataInterface stepDataInterface, int copyNr,
                          TransMeta transMeta, Trans trans ) {
     super( stepMeta, stepDataInterface, copyNr, transMeta, trans );
   }
 
+  public boolean init( StepMetaInterface stepMetaInterface, StepDataInterface stepDataInterface ) {
+    Preconditions.checkNotNull( stepMetaInterface );
+    stepMeta = (BaseStreamStepMeta) stepMetaInterface;
+    stepMeta.setParentStepMeta( getStepMeta() );
+    stepMeta.setFileName( stepMeta.getTransformationPath() );
 
-  public boolean processRow( StepMetaInterface smi, StepDataInterface sdi ) throws KettleException {
 
+    boolean superInit = super.init( stepMetaInterface, stepDataInterface );
+
+    try {
+      TransMeta transMeta = TransExecutorMeta
+        .loadMappingMeta( stepMeta, getTransMeta().getRepository(), getTransMeta().getMetaStore(),
+          getParentVariableSpace() );
+      subtransExecutor = new SubtransExecutor( getStepname(),
+        getTrans(), transMeta, true,
+        new TransExecutorParameters(), environmentSubstitute( stepMeta.getSubStep() ) );
+
+    } catch ( KettleException e ) {
+      log.logError( e.getLocalizedMessage(), e );
+      return false;
+    }
+
+    List<CheckResultInterface> remarks = new ArrayList<>();
+    stepMeta.check(
+      remarks, getTransMeta(), stepMeta.getParentStepMeta(),
+      null, null, null, null, //these parameters are not used inside the method
+      variables, getRepository(), getMetaStore() );
+    boolean errorsPresent =
+      remarks.stream().filter( result -> result.getType() == CheckResultInterface.TYPE_RESULT_ERROR )
+        .peek( result -> logError( result.getText() ) )
+        .count() > 0;
+    if ( errorsPresent ) {
+      return false;
+    }
+    return superInit;
+  }
+
+
+  @Override public void setOutputDone() {
+    if ( !safeStopped.get() ) {
+      super.setOutputDone();
+    }
+  }
+
+  @Override public boolean processRow( StepMetaInterface smi, StepDataInterface sdi ) throws KettleException {
     Preconditions.checkArgument( first,
-      "Streaming steps should only have processRow called once." );
+      BaseMessages.getString( PKG, "BaseStreamStep.ProcessRowsError" ) );
+    Preconditions.checkNotNull( source );
+    Preconditions.checkNotNull( window );
+
+    source.open();
 
     bufferStream().forEach( result -> {
-        if ( result.getNrErrors() > 0 ) {
-          stopAll();
-        } else {
-          putRows( result.getRows() );
-        }
+      if ( result.isSafeStop() ) {
+        getTrans().safeStop();
       }
-    );
+
+      putRows( result.getRows() );
+    } );
+    super.setOutputDone();
+
+    // Needed for when an Abort Step is used.
+    source.close();
     return false;
   }
 
-  protected Iterable<Result> bufferStream() {
-    return window.buffer( source.rows() );
+  private Iterable<Result> bufferStream() {
+    return window.buffer( source.observable() );
   }
 
   @Override
   public void stopRunning( StepMetaInterface stepMetaInterface, StepDataInterface stepDataInterface )
     throws KettleException {
-    source.close();
+    if ( !safeStopped.get() ) {
+      subtransExecutor.stop();
+    }
+    if ( source != null ) {
+      source.close();
+    }
     super.stopRunning( stepMetaInterface, stepDataInterface );
   }
 
   @Override public void resumeRunning() {
-    source.resume();
+    if ( source != null ) {
+      source.resume();
+    }
     super.resumeRunning();
   }
 
-  @Override public Collection<StepStatus> subStatuses() {
-    return Collections.emptyList();
-  }
-
   @Override public void pauseRunning() {
-    source.pause();
+    if ( source != null ) {
+      source.pause();
+    }
     super.pauseRunning();
   }
 
   private void putRows( List<RowMetaAndData> rows ) {
+    if ( isStopped() && !safeStopped.get() ) {
+      return;
+    }
     rows.forEach( row -> {
       try {
         putRow( row.getRowMeta(), row.getData() );
@@ -104,5 +172,33 @@ public class BaseStreamStep<I> extends BaseStep {
     } );
   }
 
+  protected int getBatchSize() {
+    try {
+      return Integer.parseInt( stepMeta.getBatchSize() );
+    } catch ( NumberFormatException nfe ) {
+      return 50;
+    }
+  }
 
+  protected long getDuration() {
+    try {
+      return Long.parseLong( stepMeta.getBatchDuration() );
+    } catch ( NumberFormatException nfe ) {
+      return 5000L;
+    }
+  }
+
+  @Override public Collection<StepStatus> subStatuses() {
+    return subtransExecutor != null ? subtransExecutor.getStatuses().values() : Collections.emptyList();
+  }
+
+  @VisibleForTesting
+  public StreamSource<List<Object>> getSource() {
+    return source;
+  }
+
+  @VisibleForTesting
+  public void setSource( StreamSource<List<Object>> source ) {
+    this.source = source;
+  }
 }

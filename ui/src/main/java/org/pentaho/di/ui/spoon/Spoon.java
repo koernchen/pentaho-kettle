@@ -3,7 +3,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -59,10 +59,14 @@ import java.util.stream.Collectors;
 import javax.swing.UIManager;
 import javax.swing.plaf.metal.MetalLookAndFeel;
 
+import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.io.output.TeeOutputStream;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.vfs2.FileObject;
+import org.apache.commons.vfs2.FileSystemException;
 import org.eclipse.jface.action.Action;
 import org.eclipse.jface.action.MenuManager;
+import org.eclipse.jface.dialogs.Dialog;
 import org.eclipse.jface.dialogs.MessageDialog;
 import org.eclipse.jface.dialogs.MessageDialogWithToggle;
 import org.eclipse.jface.window.ApplicationWindow;
@@ -150,6 +154,7 @@ import org.pentaho.di.core.database.DatabaseMeta;
 import org.pentaho.di.core.encryption.Encr;
 import org.pentaho.di.core.exception.KettleAuthException;
 import org.pentaho.di.core.exception.KettleException;
+import org.pentaho.di.core.exception.KettleFileException;
 import org.pentaho.di.core.exception.KettleMissingPluginsException;
 import org.pentaho.di.core.exception.KettleRowException;
 import org.pentaho.di.core.exception.KettleValueException;
@@ -275,6 +280,7 @@ import org.pentaho.di.ui.core.dialog.PopupOverwritePrompter;
 import org.pentaho.di.ui.core.dialog.PreviewRowsDialog;
 import org.pentaho.di.ui.core.dialog.ShowBrowserDialog;
 import org.pentaho.di.ui.core.dialog.ShowMessageDialog;
+import org.pentaho.di.ui.core.dialog.SimpleMessageDialog;
 import org.pentaho.di.ui.core.dialog.Splash;
 import org.pentaho.di.ui.core.dialog.SubjectDataBrowserDialog;
 import org.pentaho.di.ui.core.dialog.BrowserEnvironmentWarningDialog;
@@ -460,6 +466,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
   public PropsUI props;
 
   public Repository rep;
+  private String repositoryName;
 
   // private RepositorySecurityManager securityManager;
 
@@ -511,6 +518,8 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
   public static final String REFRESH_SELECTION_EXTENSION = "REFRESH_SELECTION_EXTENSION";
 
   public static final String EDIT_SELECTION_EXTENSION = "EDIT_SELECTION_EXTENSION";
+
+  private static final int MISSING_RECENT_DLG_WIDTH = 465;
 
   private Composite tabComp;
 
@@ -784,9 +793,9 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
    * happen in those listeners.
    */
   private static void registerUIPluginObjectTypes() {
-    RepositoryPluginType.getInstance()
-                        .addObjectType( RepositoryRevisionBrowserDialogInterface.class, "version-browser-classname" );
-    RepositoryPluginType.getInstance().addObjectType( RepositoryDialogInterface.class, "dialog-classname" );
+    RepositoryPluginType repositoryPluginType = RepositoryPluginType.getInstance();
+    repositoryPluginType.addObjectType( RepositoryRevisionBrowserDialogInterface.class, "version-browser-classname" );
+    repositoryPluginType.addObjectType( RepositoryDialogInterface.class, "dialog-classname" );
 
     PluginRegistry.addPluginType( SpoonPluginType.getInstance() );
 
@@ -1463,7 +1472,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
         return;
       }
 
-      delegates.jobs.copyJobEntries( jobMeta, jobMeta.getSelectedEntries() );
+      delegates.jobs.copyJobEntries( jobMeta.getSelectedEntries() );
     }
   }
 
@@ -1730,17 +1739,40 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
         }
       };
 
+      // create callback functions for welcome
+      Runnable openFileFunction = new Runnable() {
+        public void run() {
+          Spoon.this.openFile();
+        }
+      };
+      Runnable newTransFunction = new Runnable() {
+        public void run() {
+          Spoon.this.newTransFile();
+        }
+      };
+      Runnable newJobFunction = new Runnable() {
+        public void run() {
+          Spoon.this.newJobFile();
+        }
+      };
+
+      HashMap<String, Runnable> functions = new HashMap<String, Runnable>();
+      functions.put( "openFileFunction", openFileFunction );
+      functions.put( "newTransFunction", newTransFunction );
+      functions.put( "newJobFunction", newJobFunction );
+
       // see if we are in webstart mode
       String webstartRoot = System.getProperty( "spoon.webstartroot" );
       if ( webstartRoot != null ) {
         URL url = new URL( webstartRoot + '/' + FILE_WELCOME_PAGE );
-        addSpoonBrowser( STRING_WELCOME_TAB_NAME, url.toString(), listener ); // ./docs/English/tips/index.htm
+        // ./docs/English/tips/index.htm
+        addSpoonBrowser( STRING_WELCOME_TAB_NAME, url.toString(), true, listener, functions, false );
       } else {
         // see if we can find the welcome file on the file system
         File file = new File( FILE_WELCOME_PAGE );
         if ( file.exists() ) {
           // ./docs/English/tips/index.htm
-          addSpoonBrowser( STRING_WELCOME_TAB_NAME, file.toURI().toURL().toString(), listener );
+          addSpoonBrowser( STRING_WELCOME_TAB_NAME, file.toURI().toURL().toString(), true, listener, functions, false );
         }
       }
     } catch ( MalformedURLException e1 ) {
@@ -1766,7 +1798,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
       };
 
       URL url = new URL( DOCUMENTATION_URL );
-      addSpoonBrowser( STRING_DOCUMENT_TAB_NAME, url.toString(), listener );
+      HelpUtils.openHelpDialog( shell, STRING_DOCUMENT_TAB_NAME, url.toString(), listener );
 
     } catch ( MalformedURLException e1 ) {
       log.logError( Const.getStackTracker( e1 ) );
@@ -2344,7 +2376,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
           if ( !filterMatch( pluginName ) && !filterMatch( pluginDescription ) ) {
             continue;
           }
-          createTreeItem( item, pluginName, stepImage );
+          createTreeItem( item, pluginName, stepImage, p.getIds()[ 0 ] );
           coreStepToolTipMap.put( pluginName, pluginDescription );
         }
       }
@@ -3341,10 +3373,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
   }
 
   public String getRepositoryName() {
-    if ( rep == null ) {
-      return null;
-    }
-    return rep.getName();
+    return repositoryName;
   }
 
   public String getUsername() {
@@ -3683,7 +3712,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
   public boolean performNewTransHopChecks( TransMeta transMeta, TransHopMeta newHop ) {
     boolean ok = true;
 
-    if ( transMeta.hasLoop( newHop.getFromStep() ) || transMeta.hasLoop( newHop.getToStep() ) ) {
+    if ( transMeta.hasLoop( newHop.getToStep() ) ) {
       MessageBox mb = new MessageBox( shell, SWT.OK | SWT.ICON_ERROR );
       mb.setMessage( BaseMessages.getString( PKG, "TransGraph.Dialog.HopCausesLoop.Message" ) );
       mb.setText( BaseMessages.getString( PKG, "TransGraph.Dialog.HopCausesLoop.Title" ) );
@@ -4547,9 +4576,38 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
     }
   }
 
+  protected static String getFileType( final String fineName ) {
+    final String fileExt = fineName == null ? null : FilenameUtils.getExtension( fineName );
+    String fileType = BaseMessages.getString( PKG, "System.FileType.File" );
+    if ( "ktr".equals( fileExt ) ) {
+      fileType = BaseMessages.getString( PKG, "System.FileType.Transformation" );
+    } else if ( "kjb".equals( fileExt ) ) {
+      fileType = BaseMessages.getString( PKG, "System.FileType.Job" );
+    }
+    return fileType;
+  }
+
   public void openFile( String filename, boolean importfile ) {
     // Open the XML and see what's in there.
     // We expect a single <transformation> or <job> root at this time...
+
+    // does the file exist? If not, show an error dialog
+    boolean fileExists = false;
+    try {
+      final FileObject file = KettleVFS.getFileObject( filename );
+      fileExists = file.exists();
+    } catch ( final KettleFileException | FileSystemException e ) {
+      // nothing to do, null fileObject will be handled below
+    }
+    if ( StringUtils.isBlank( filename ) || !fileExists ) {
+      final Dialog dlg = new SimpleMessageDialog( shell,
+        BaseMessages.getString( PKG, "Spoon.Dialog.MissingRecentFile.Title" ),
+        BaseMessages.getString( PKG, "Spoon.Dialog.MissingRecentFile.Message", getFileType( filename ).toLowerCase() ),
+        MessageDialog.ERROR, BaseMessages.getString( PKG, "System.Button.Close" ),
+        MISSING_RECENT_DLG_WIDTH, SimpleMessageDialog.BUTTON_WIDTH );
+      dlg.open();
+      return;
+    }
 
     boolean loaded = false;
     FileListener listener = null;
@@ -5088,8 +5146,10 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
         BaseMessages.getString( PKG, "Spoon.Dialog.ErrorSavingDatabaseCache.Message" ), e );
     }
 
-    delegates.tabs.renameTabs(); // filename or name of transformation might
-    // have changed.
+    // rename the tab only if the meta was successfully saved
+    if ( saved ) {
+      delegates.tabs.renameTabs(); // filename or name of transformation might have changed.
+    }
     refreshTree();
 
     // Update menu status for the newly saved object
@@ -5102,11 +5162,16 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
     return saveToRepository( meta, meta.getObjectId() == null );
   }
 
+  @VisibleForTesting
+  FileDialogOperation getFileDialogOperation(  String command, String origin ) {
+    return new FileDialogOperation( command, origin );
+  }
+
   public boolean saveToRepository( EngineMetaInterface meta, boolean ask_name ) throws KettleException {
-    if ( log.isDetailed() ) {
+    if ( getLog().isDetailed() ) {
       // "Save to repository..."
       //
-      log.logDetailed( BaseMessages.getString( PKG, "Spoon.Log.SaveToRepository" ) );
+      getLog().logDetailed( BaseMessages.getString( PKG, "Spoon.Log.SaveToRepository" ) );
     }
     if ( rep != null ) {
 
@@ -5117,23 +5182,38 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
 
       if ( ask_name ) {
         try {
-          FileDialogOperation fileDialogOperation = new FileDialogOperation( FileDialogOperation.SAVE,
+          String fileType = meta.getFileType().equals( LastUsedFile.FILE_TYPE_TRANSFORMATION )
+            ? FileDialogOperation.TRANSFORMATION : FileDialogOperation.JOB;
+          FileDialogOperation fileDialogOperation = getFileDialogOperation( FileDialogOperation.SAVE,
             FileDialogOperation.ORIGIN_SPOON );
+          fileDialogOperation.setFileType( fileType );
           fileDialogOperation.setStartDir( meta.getRepositoryDirectory().getPath() );
-          ExtensionPointHandler.callExtensionPoint( log, KettleExtensionPoint.SpoonOpenSaveRepository.id,
+          //Set the filename so it can be used as the default filename in the save dialog
+          fileDialogOperation.setFilename( meta.getFilename() );
+          ExtensionPointHandler.callExtensionPoint( getLog(), KettleExtensionPoint.SpoonOpenSaveRepository.id,
             fileDialogOperation );
           if ( fileDialogOperation.getRepositoryObject() != null ) {
             RepositoryObject repositoryObject = (RepositoryObject) fileDialogOperation.getRepositoryObject();
+            final RepositoryDirectoryInterface oldDir = meta.getRepositoryDirectory();
+            final String oldName = meta.getName();
             meta.setRepositoryDirectory( repositoryObject.getRepositoryDirectory() );
             meta.setName( repositoryObject.getName() );
-            saveToRepositoryConfirmed( meta );
-            delegates.tabs.renameTabs();
+            final boolean saved = saveToRepositoryConfirmed( meta );
+            // rename the tab only if the meta object was successfully saved
+            if ( saved ) {
+              delegates.tabs.renameTabs();
+            } else {
+              // if the object wasn't successfully saved, set the name and directory back to their original values
+              meta.setRepositoryDirectory( oldDir );
+              meta.setName( oldName );
+            }
+            return saved;
           }
         } catch ( KettleException ke ) {
           //Ignore
         }
       } else {
-        saveToRepositoryConfirmed( meta );
+        return saveToRepositoryConfirmed( meta );
       }
 
     } else {
@@ -5350,8 +5430,10 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
       saved = saveXMLFile( meta, false );
     }
 
-    delegates.tabs.renameTabs(); // filename or name of transformation might
-    // have changed.
+    // rename the tab only if the meta was successfully saved
+    if ( saved ) {
+      delegates.tabs.renameTabs(); // filename or name of transformation might have changed.
+    }
     refreshTree();
     if ( saved && ( meta instanceof TransMeta || meta instanceof JobMeta ) ) {
       TabMapEntry tabEntry = delegates.tabs.findTabMapEntry( meta );
@@ -5776,7 +5858,8 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
         if ( f.exists() ) {
           MessageBox mb = new MessageBox( shell, SWT.NO | SWT.YES | SWT.ICON_WARNING );
           // "This file already exists.  Do you want to overwrite it?"
-          mb.setMessage( BaseMessages.getString( PKG, "Spoon.Dialog.PromptOverwriteFile.Message" ) );
+          mb.setMessage( BaseMessages.getString( PKG, "Spoon.Dialog.PromptOverwriteFile." + meta.getFileType()
+            + ".Message", Const.createName( filename ) ) );
           // "This file already exists!"
           mb.setText( BaseMessages.getString( PKG, "Spoon.Dialog.PromptOverwriteFile.Title" ) );
           id = mb.open();
@@ -5873,7 +5956,8 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
         if ( f.exists() ) {
           MessageBox mb = new MessageBox( shell, SWT.NO | SWT.YES | SWT.ICON_WARNING );
           // "This file already exists.  Do you want to overwrite it?"
-          mb.setMessage( BaseMessages.getString( PKG, "Spoon.Dialog.PromptOverwriteFile.Message" ) );
+          mb.setMessage( BaseMessages.getString( PKG, "Spoon.Dialog.PromptOverwriteFile." + meta.getFileType()
+            + ".Message", Const.createName( filename ) ) );
           mb.setText( BaseMessages.getString( PKG, "Spoon.Dialog.PromptOverwriteFile.Title" ) );
           id = mb.open();
         }
@@ -5928,9 +6012,12 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
       String sync = BasePropertyHandler.getProperty( SYNC_TRANS );
       if ( Boolean.parseBoolean( sync ) ) {
         listener.syncMetaName( meta, Const.createName( filename ) );
-        delegates.tabs.renameTabs();
       }
       saved = listener.save( meta, filename, export );
+      if ( Boolean.parseBoolean( sync ) && saved ) {
+        // rename the tab only if the meta was successfully saved
+        delegates.tabs.renameTabs();
+      }
     }
 
     return saved;
@@ -6002,6 +6089,9 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
       List<Class<? extends PluginTypeInterface>> pluginTypeClasses = registry.getPluginTypes();
       for ( Class<? extends PluginTypeInterface> pluginTypeClass : pluginTypeClasses ) {
         PluginTypeInterface pluginTypeInterface = registry.getPluginType( pluginTypeClass );
+        if ( pluginTypeInterface.isFragment() ) {
+          continue;
+        }
 
         String subject = pluginTypeInterface.getName();
         RowBuffer pluginInformation = registry.getPluginInformation( pluginTypeClass );
@@ -6097,14 +6187,6 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
     String filter = selectionFilter.getText();
     if ( Utils.isEmpty( filter ) ) {
       return true;
-    }
-
-    try {
-      if ( string.matches( filter ) ) {
-        return true;
-      }
-    } catch ( Exception e ) {
-      log.logError( "Not a valid pattern [" + filter + "] : " + e.getMessage() );
     }
 
     return string.toUpperCase().contains( filter.toUpperCase() );
@@ -6301,9 +6383,17 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
   }
 
   @VisibleForTesting TreeItem createTreeItem( TreeItem parent, String text, Image image ) {
+    return createTreeItem( parent, text, image, null );
+  }
+
+  @VisibleForTesting TreeItem createTreeItem( TreeItem parent, String text, Image image, String id ) {
     TreeItem item = new TreeItem( parent, SWT.NONE );
     item.setText( text );
     item.setImage( image );
+
+    if ( id != null ) {
+      item.setData( "StepId", id );
+    }
     return item;
   }
 
@@ -6633,6 +6723,27 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
    *
    */
   public StepMeta newStep( TransMeta transMeta, String name, String description, boolean openit, boolean rename ) {
+    return newStep( transMeta, null, name, description, openit, rename );
+  }
+
+    /**
+     * Allocate new step, optionally open and rename it.
+     *
+     * @param id
+     *          Id of the new step
+     * @param name
+     *          Name of the new step
+     * @param description
+     *          Description of the type of step
+     * @param openit
+     *          Open the dialog for this step?
+     * @param rename
+     *          Rename this step?
+     *
+     * @return The newly created StepMeta object.
+     *
+     */
+  public StepMeta newStep( TransMeta transMeta, String id, String name, String description, boolean openit, boolean rename ) {
     StepMeta inf = null;
 
     // See if we need to rename the step to avoid doubles!
@@ -6647,10 +6758,10 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
     }
 
     PluginRegistry registry = PluginRegistry.getInstance();
-    PluginInterface stepPlugin = null;
+    PluginInterface stepPlugin = id != null ? registry.findPluginWithId( StepPluginType.class, id )
+      : registry.findPluginWithName( StepPluginType.class, description );
 
     try {
-      stepPlugin = registry.findPluginWithName( StepPluginType.class, description );
       if ( stepPlugin != null ) {
         StepMetaInterface info = (StepMetaInterface) registry.loadClass( stepPlugin );
 
@@ -6699,7 +6810,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
       }
     } catch ( KettleException e ) {
       String filename = stepPlugin.getErrorHelpFile();
-      if ( stepPlugin != null && !Utils.isEmpty( filename ) ) {
+      if ( !Utils.isEmpty( filename ) ) {
         // OK, in stead of a normal error message, we give back the
         // content of the error help file... (HTML)
         FileInputStream fis = null;
@@ -7936,7 +8047,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
           if ( !lastUsedFile.isSourceRepository()
             || lastUsedFile.isSourceRepository() && rep != null
             && rep.getName().equals( lastUsedFile.getRepositoryName() ) ) {
-            loadLastUsedFile( lastUsedFile, rep == null ? null : rep.getName(), false );
+            loadLastUsedFileAtStartup( lastUsedFile, rep == null ? null : rep.getName() );
           }
         } catch ( Exception e ) {
           hideSplash();
@@ -8094,12 +8205,82 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
     return clOptions;
   }
 
+  /**
+   * Loads the {@link LastUsedFile} residing the the {@link Repository} with {@code repoName} without "tracking it" -
+   * meaning that it is not explicitly added to the "recent" file collection, since it is expected to already exist
+   * in this collections.
+   *
+   * @param lastUsedFile   the {@link LastUsedFile} being loaded
+   * @param repositoryName the name of the {@link Repository} containing the {@link LastUsedFile}
+   * @throws KettleException
+   */
+  public void loadLastUsedFileAtStartup( LastUsedFile lastUsedFile, String repositoryName ) throws KettleException {
+    // when loading tabs at startup, we do not need to track it, as it should already be added to the appropriate
+    // lastUsedFile collections
+    loadLastUsedFile( lastUsedFile, repositoryName, false, true );
+  }
+
+  /**
+   * Loads the {@link LastUsedFile} residing the the {@link Repository} with {@code repoName}, and "tracks" it by
+   * adding it to the "recent" files collection.
+   *
+   * @param lastUsedFile   the {@link LastUsedFile} being loaded
+   * @param repositoryName the name of the {@link Repository} containing the {@link LastUsedFile}
+   * @throws KettleException
+   */
   public void loadLastUsedFile( LastUsedFile lastUsedFile, String repositoryName ) throws KettleException {
-    loadLastUsedFile( lastUsedFile, repositoryName, true );
+    loadLastUsedFile( lastUsedFile, repositoryName, true, false );
+  }
+
+  /**
+   * Returns true if the {@link LastUsedFile} at the given {@code index} within the {@link
+   * PropsUI#getLastUsedRepoFiles()} collection exists within the given {@code repo} {@link Repository},
+   * and false otherwise.
+   *
+   * @param repo     the {@link Repository} containing the file
+   * @param indexStr the String index of the file within the last used repo file collection
+   * @return true if the {@link LastUsedFile} at the given {@code index} within the {@link
+   * PropsUI#getLastUsedRepoFiles()} collection exists within the given {@code repo} {@link Repository},
+   * and false otherwise
+   * @throws KettleException
+   */
+  public boolean recentRepoFileExists( String repo, String indexStr ) {
+    final LastUsedFile lastUsedFile = getLastUsedRepoFile( repo, indexStr );
+    // this should never happen when used on a repo file, but we check just to be safe
+    if ( lastUsedFile == null ) {
+      return false;
+    }
+    // again, should never happen, since the file being selected is a valid repo file in this repo
+    if ( !lastUsedFile.isSourceRepository() || !rep.getName().equalsIgnoreCase( lastUsedFile.getRepositoryName() ) ) {
+      return false;
+    }
+    try {
+      final RepositoryDirectoryInterface rdi = rep.findDirectory( lastUsedFile.getDirectory() );
+      if ( rdi == null ) {
+        return false;
+      }
+      final RepositoryObjectType fileType = lastUsedFile.isJob() ? RepositoryObjectType.JOB
+        : RepositoryObjectType.TRANSFORMATION;
+      return rep.exists( lastUsedFile.getFilename(), rdi, fileType );
+    } catch ( final KettleException ke ) {
+      // log
+      return false;
+    }
+  }
+
+
+  public LastUsedFile getLastUsedRepoFile( String repo, String indexStr ) {
+    // this should never happen when used on a repo file, but we check just to be safe
+    if ( rep == null ) {
+      return null;
+    }
+    final int idx = Integer.parseInt( indexStr );
+    final List<LastUsedFile> lastUsedFiles = props.getLastUsedRepoFiles().getOrDefault( repo, Collections.emptyList() );
+    return lastUsedFiles.get( idx );
   }
 
   private void loadLastUsedFile(
-      LastUsedFile lastUsedFile, String repositoryName, boolean trackIt ) throws KettleException {
+      LastUsedFile lastUsedFile, String repositoryName, boolean trackIt, boolean isStartup ) throws KettleException {
     boolean useRepository = repositoryName != null;
     // Perhaps we need to connect to the repository?
     //
@@ -8117,46 +8298,68 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
         if ( rep.getName().equalsIgnoreCase( lastUsedFile.getRepositoryName() ) ) {
           RepositoryDirectoryInterface rdi = rep.findDirectory( lastUsedFile.getDirectory() );
           if ( rdi != null ) {
-            // Are we loading a transformation or a job?
-            if ( lastUsedFile.isTransformation() ) {
-              if ( log.isDetailed() ) {
-                // "Auto loading transformation ["+lastfiles[0]+"] from repository directory ["+lastdirs[0]+"]"
-                log.logDetailed( BaseMessages.getString( PKG, "Spoon.Log.AutoLoadingTransformation", lastUsedFile
-                  .getFilename(), lastUsedFile.getDirectory() ) );
-              }
-              TransLoadProgressDialog tlpd =
-                new TransLoadProgressDialog( shell, rep, lastUsedFile.getFilename(), rdi, null );
-              TransMeta transMeta = tlpd.open();
-              if ( transMeta != null ) {
-                if ( trackIt ) {
-                  props.addLastFile( LastUsedFile.FILE_TYPE_TRANSFORMATION, lastUsedFile.getFilename(), rdi
-                    .getPath(), true, rep.getName(), getUsername(), null );
+            // does the file exist in the repo?
+            final RepositoryObjectType fileType = lastUsedFile.isJob() ? RepositoryObjectType.JOB
+              : RepositoryObjectType.TRANSFORMATION;
+            if ( !rep.exists( lastUsedFile.getFilename(), rdi, fileType ) ) {
+              // open an warning dialog only if this file was explicitly selected to be opened; on startup, simply skip
+              // opening this file
+              if ( isStartup ) {
+                if ( log.isDetailed() ) {
+                  log.logDetailed( BaseMessages.getString( PKG, "Spoon.log.openingMissingFile" ) );
                 }
-                // transMeta.setFilename(lastUsedFile.getFilename());
-                transMeta.clearChanged();
-                addTransGraph( transMeta );
-                refreshTree();
+              } else {
+                final Dialog dlg = new SimpleMessageDialog( shell,
+                  BaseMessages.getString( PKG, "Spoon.Dialog.MissingRecentFile.Title" ),
+                  BaseMessages.getString( PKG, "Spoon.Dialog.MissingRecentFile.Message",
+                    lastUsedFile.getLongFileType().toLowerCase() ), MessageDialog.ERROR,
+                  BaseMessages.getString( PKG, "System.Button.Close" ),
+                  MISSING_RECENT_DLG_WIDTH, SimpleMessageDialog.BUTTON_WIDTH );
+                dlg.open();
               }
-            } else if ( lastUsedFile.isJob() ) {
-              JobLoadProgressDialog progressDialog =
-                new JobLoadProgressDialog( shell, rep, lastUsedFile.getFilename(), rdi, null );
-              JobMeta jobMeta = progressDialog.open();
-              if ( jobMeta != null ) {
-                if ( trackIt ) {
-                  props.addLastFile(
-                    LastUsedFile.FILE_TYPE_JOB, lastUsedFile.getFilename(), rdi.getPath(), true, rep
-                      .getName(), getUsername(), null );
+            } else {
+              // Are we loading a transformation or a job?
+              if ( lastUsedFile.isTransformation() ) {
+                if ( log.isDetailed() ) {
+                  // "Auto loading transformation ["+lastfiles[0]+"] from repository directory ["+lastdirs[0]+"]"
+                  log.logDetailed( BaseMessages.getString( PKG, "Spoon.Log.AutoLoadingTransformation", lastUsedFile
+                    .getFilename(), lastUsedFile.getDirectory() ) );
                 }
-                jobMeta.clearChanged();
-                addJobGraph( jobMeta );
+                TransLoadProgressDialog tlpd =
+                  new TransLoadProgressDialog( shell, rep, lastUsedFile.getFilename(), rdi, null );
+                TransMeta transMeta = tlpd.open();
+                if ( transMeta != null ) {
+                  if ( trackIt ) {
+                    props.addLastFile( LastUsedFile.FILE_TYPE_TRANSFORMATION, lastUsedFile.getFilename(), rdi
+                      .getPath(), true, rep.getName(), getUsername(), null );
+                  }
+                  // transMeta.setFilename(lastUsedFile.getFilename());
+                  transMeta.clearChanged();
+                  addTransGraph( transMeta );
+                  refreshTree();
+                }
+              } else if ( lastUsedFile.isJob() ) {
+                JobLoadProgressDialog progressDialog =
+                  new JobLoadProgressDialog( shell, rep, lastUsedFile.getFilename(), rdi, null );
+                JobMeta jobMeta = progressDialog.open();
+                if ( jobMeta != null ) {
+                  if ( trackIt ) {
+                    props.addLastFile(
+                      LastUsedFile.FILE_TYPE_JOB, lastUsedFile.getFilename(), rdi.getPath(), true, rep
+                        .getName(), getUsername(), null );
+                  }
+                  jobMeta.clearChanged();
+                  addJobGraph( jobMeta );
+                }
               }
+              refreshTree();
             }
-            refreshTree();
           }
         }
       }
     }
 
+    // open files stored locally, not in the repository
     if ( !lastUsedFile.isSourceRepository() && !Utils.isEmpty( lastUsedFile.getFilename() ) ) {
       if ( lastUsedFile.isTransformation() ) {
         openFile( lastUsedFile.getFilename(), rep != null );
@@ -8651,6 +8854,7 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
 
   public void setRepository( Repository rep ) {
     this.rep = rep;
+    this.repositoryName = rep != null ? rep.getName() : null;
     try {
 
       // Keep one metastore here...
@@ -8694,6 +8898,10 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
     enableMenus();
   }
 
+  public void setRepositoryName( String repoName ) {
+    this.repositoryName = repoName;
+  }
+
   public void addMenuListener( String id, Object listener, String methodName ) {
     menuListeners.add( new Object[] { id, listener, methodName } );
   }
@@ -8706,6 +8914,10 @@ public class Spoon extends ApplicationWindow implements AddUndoPositionInterface
   @Override
   public void addJobGraph( JobMeta jobMeta ) {
     delegates.jobs.addJobGraph( jobMeta );
+  }
+
+  public boolean addSpoonBrowser( String name, String urlString, boolean isURL, LocationListener locationListener, Map<String, Runnable> functions, boolean showControls ) {
+    return delegates.tabs.addSpoonBrowser( name, urlString, isURL, locationListener, functions, showControls );
   }
 
   public boolean addSpoonBrowser( String name, String urlString, LocationListener locationListener, boolean showControls ) {

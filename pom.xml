@@ -49,12 +49,13 @@
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
     <maven.build.timestamp.format>yyyy-MM-dd hh.mm.ss</maven.build.timestamp.format>
+    <maven-surefire-plugin.argLine>-Duser.timezone=UTC -Dfile.encoding=UTF-8 -Duser.language=en -Duser.country=US</maven-surefire-plugin.argLine>
 
     <!-- License Configuration -->
     <license.licenseName>apache_v2</license.licenseName>
 
     <!-- Pentaho dependencies -->
-    <pentaho-xul.version>8.1.0.0-SNAPSHOT</pentaho-xul.version>
+    <commons-xul.version>8.1.0.0-SNAPSHOT</commons-xul.version>
     <pentaho-metastore.version>8.1.0.0-SNAPSHOT</pentaho-metastore.version>
 
     <!-- Third-party dependencies -->
@@ -73,27 +74,28 @@
 
     <!-- Test dependencies -->
     <mockito-all.version>1.10.19</mockito-all.version>
-    <powermock-module-junit4.version>1.6.6</powermock-module-junit4.version>
-    <powermock-api-mockito.version>1.6.6</powermock-api-mockito.version>
+
+    <powermock-module-junit4.version>1.7.3</powermock-module-junit4.version>
+    <powermock-api-mockito.version>1.7.3</powermock-api-mockito.version>
     <java-hamcrest.version>2.0.0.0</java-hamcrest.version>
   </properties>
 
   <dependencyManagement>
     <dependencies>
       <dependency>
-        <groupId>pentaho</groupId>
-        <artifactId>pentaho-xul-core</artifactId>
-        <version>${pentaho-xul.version}</version>
+        <groupId>org.pentaho</groupId>
+        <artifactId>commons-xul-core</artifactId>
+        <version>${commons-xul.version}</version>
       </dependency>
       <dependency>
-        <groupId>pentaho</groupId>
-        <artifactId>pentaho-xul-swing</artifactId>
-        <version>${pentaho-xul.version}</version>
+        <groupId>org.pentaho</groupId>
+        <artifactId>commons-xul-swing</artifactId>
+        <version>${commons-xul.version}</version>
       </dependency>
       <dependency>
-        <groupId>pentaho</groupId>
-        <artifactId>pentaho-xul-swt</artifactId>
-        <version>${pentaho-xul.version}</version>
+        <groupId>org.pentaho</groupId>
+        <artifactId>commons-xul-swt</artifactId>
+        <version>${commons-xul.version}</version>
         <exclusions>
           <exclusion>
             <groupId>org.eclipse.swt</groupId>

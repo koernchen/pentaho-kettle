@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -33,7 +33,6 @@ import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
 import org.pentaho.di.core.KettleEnvironment;
 import org.pentaho.di.core.exception.KettleException;
-import org.pentaho.di.core.exception.KettleStepException;
 import org.pentaho.di.core.logging.LogChannel;
 import org.pentaho.di.core.row.RowMetaInterface;
 import org.pentaho.di.trans.Trans;
@@ -41,19 +40,17 @@ import org.pentaho.di.trans.TransMeta;
 import org.pentaho.di.trans.step.RowHandler;
 import org.pentaho.di.trans.step.StepDataInterface;
 import org.pentaho.di.trans.step.StepMeta;
+import org.pentaho.di.trans.streaming.api.StreamSource;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 
-import static org.hamcrest.CoreMatchers.equalTo;
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.when;
 
@@ -83,8 +80,8 @@ public class FileStreamTest {
     trans.setTransMeta( transMeta );
     trans.setLog( new LogChannel( this ) );
     streamMeta.setTransformationPath( getClass().getResource( "/subtrans.ktr" ).getPath() );
-    streamMeta.setBatchDuration( "50" );
-    streamMeta.setBatchSize( "5" );
+    streamMeta.setBatchDuration( "5" );
+    streamMeta.setBatchSize( "1" );
     streamMeta.setSourcePath( streamFile.getPath() );
 
     when( stepMeta.getName() ).thenReturn( "mocked name" );
@@ -98,8 +95,9 @@ public class FileStreamTest {
     writer.close();
   }
 
+
   @Ignore
-  @Test public void testStreamFile() throws KettleException, InterruptedException, IOException, ExecutionException {
+  @Test public void testStreamFile() throws IOException {
     FileStream step =
       (FileStream) streamMeta.getStep( stepMeta, stepData, 1, transMeta, trans );
     step.init( streamMeta, new FileStreamData() );
@@ -108,22 +106,28 @@ public class FileStreamTest {
     final RowHandler rowHandler = getRowHandler();
     step.setRowHandler( rowHandler );
 
-    Future<Boolean> processRowReturn = executor.submit( () -> step.processRow( streamMeta, null ) );
+    StreamSource<List<Object>> source = step.getStreamSource();
+    source.open();
 
-
-    assertThat( rows.size(), equalTo( 0 ) );
     writer.write( "line 1" );
     writer.flush();
-    Thread.sleep( 2000 );
+    //Thread.sleep( 2000 );
+    executor.submit( () -> {
+      int i = 0;
+      while ( true ) {
+        Thread.sleep( 100 );
+        writer.write( "line" + i++ + "\n" );
+        writer.flush();
+      }
+    } );
 
-    System.out.println(rows.size());
-    processRowReturn.get();
-    //assertThat( rows.size(), equalTo( 1 ) );
-    //    Observable.just(
-    //      step.processRow( streamMeta, null ) );
+    Iterator iter = source.observable().blockingIterable().iterator();
 
+    for ( int i = 0; i < 10; i++ ) {
 
-
+      System.out.println( iter.next() );
+    }
+    source.close();
   }
 
   List<Object[]> rows = new ArrayList<>();
@@ -132,16 +136,16 @@ public class FileStreamTest {
     return new RowHandler() {
 
 
-      @Override public Object[] getRow() throws KettleException {
+      @Override public Object[] getRow() {
         return rows.size() > 0 ? rows.remove( 0 ) : null;
       }
 
-      @Override public void putRow( RowMetaInterface rowMeta, Object[] row ) throws KettleStepException {
+      @Override public void putRow( RowMetaInterface rowMeta, Object[] row ) {
         rows.add( row );
       }
 
       @Override public void putError( RowMetaInterface rowMeta, Object[] row, long nrErrors, String errorDescriptions,
-                                      String fieldNames, String errorCodes ) throws KettleStepException {
+                                      String fieldNames, String errorCodes ) {
 
       }
     };

@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -22,27 +22,18 @@
 
 package org.pentaho.di.trans.steps.loadfileinput;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertArrayEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNotEquals;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyInt;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
-
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.vfs2.FileObject;
 import org.apache.commons.vfs2.FileSystemException;
 import org.apache.commons.vfs2.FileSystemManager;
 import org.apache.commons.vfs2.VFS;
+import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.ClassRule;
 import org.junit.Test;
 import org.mockito.Mockito;
+import org.pentaho.di.core.Const;
 import org.pentaho.di.core.KettleClientEnvironment;
 import org.pentaho.di.core.exception.KettleException;
 import org.pentaho.di.core.fileinput.FileInputList;
@@ -53,13 +44,31 @@ import org.pentaho.di.core.row.ValueMetaInterface;
 import org.pentaho.di.core.row.value.ValueMetaBinary;
 import org.pentaho.di.core.row.value.ValueMetaString;
 import org.pentaho.di.core.variables.VariableSpace;
+import org.pentaho.di.junit.rules.RestorePDIEngineEnvironment;
 import org.pentaho.di.trans.Trans;
 import org.pentaho.di.trans.TransMeta;
 import org.pentaho.di.trans.step.StepDataInterface;
 import org.pentaho.di.trans.step.StepMeta;
 import org.pentaho.di.trans.step.StepMetaInterface;
 
+import java.io.UnsupportedEncodingException;
+import java.lang.reflect.Field;
+import java.nio.charset.Charset;
+
+import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.anyInt;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+
 public class LoadFileInputTest {
+  @ClassRule public static RestorePDIEngineEnvironment env = new RestorePDIEngineEnvironment();
 
   private FileSystemManager fs;
   private String filesPath;
@@ -78,14 +87,40 @@ public class LoadFileInputTest {
 
   private StepMetaInterface runtimeSMI;
   private StepDataInterface runtimeSDI;
+  private LoadFileInputField inputField;
+  private static String wasEncoding;
 
   @BeforeClass
   public static void setupBeforeClass() throws KettleException {
+    if ( Const.isWindows() ) {
+      wasEncoding = System.getProperty( "file.encoding" );
+      fiddleWithDefaultCharset( "utf8" );
+    }
     KettleClientEnvironment.init();
   }
 
+  @AfterClass
+  public static void teardownAfterClass() {
+    if ( wasEncoding != null ) {
+      fiddleWithDefaultCharset( wasEncoding );
+    }
+  }
+
+  // Yeah, I don't like it much either, but it lets me set file.encoding after
+  // the VM has fired up. Remove this code when the backlog ticket BACKLOG-20800 gets fixed.
+  private static void fiddleWithDefaultCharset( String fiddleValue ) {
+    try {
+      Class<Charset> charSet = Charset.class;
+      Field defaultCharsetFld = charSet.getDeclaredField( "defaultCharset" );
+      defaultCharsetFld.setAccessible( true );
+      defaultCharsetFld.set( null, Charset.forName( fiddleValue ) );
+    } catch ( Exception ex ) {
+      System.out.println( "*** Fiddling with Charset class failed" );
+    }
+  }
+
   @Before
-  public void setup() throws KettleException, FileSystemException {
+  public void setup() throws FileSystemException {
     fs = VFS.getManager();
     filesPath = '/' + this.getClass().getPackage().getName().replace( '.', '/' ) + "/files/";
 
@@ -111,13 +146,15 @@ public class LoadFileInputTest {
 
     runtimeSMI = stepMetaInterface;
     runtimeSDI = runtimeSMI.getStepData();
+
+    inputField = new LoadFileInputField();
+    ((LoadFileInputMeta) runtimeSMI).setInputFields( new LoadFileInputField[] { inputField } );
     stepLoadFileInput.init( runtimeSMI, runtimeSDI );
   }
 
   private FileObject getFile( final String filename ) {
     try {
-      FileObject fo = fs.resolveFile( this.getClass().getResource( filesPath + filename ) );
-      return fo;
+      return fs.resolveFile( this.getClass().getResource( filesPath + filename ) );
     } catch ( Exception e ) {
       throw new RuntimeException( "fail. " + e.getMessage(), e );
     }
@@ -138,7 +175,7 @@ public class LoadFileInputTest {
   }
 
   @Test
-  public void testOpenNextFile_0() throws FileSystemException {
+  public void testOpenNextFile_0() {
     assertFalse( stepMetaInterface.isIgnoreEmptyFile() ); // ensure default value
 
     stepInputFiles.addFile( getFile( "input0.txt" ) );
@@ -157,7 +194,7 @@ public class LoadFileInputTest {
   }
 
   @Test
-  public void testOpenNextFile_000() throws FileSystemException {
+  public void testOpenNextFile_000() {
     assertFalse( stepMetaInterface.isIgnoreEmptyFile() ); // ensure default value
 
     stepInputFiles.addFile( getFile( "input0.txt" ) );
@@ -262,16 +299,10 @@ public class LoadFileInputTest {
 
     assertNotNull( stepLoadFileInput.getOneRow() );
     assertEquals( "input1 - not empty", new String( stepLoadFileInput.data.filecontent ) );
+  }
 
-    // for next tests
-    LoadFileInputField inputField = new LoadFileInputField();
-    Mockito.doReturn( new LoadFileInputField[]{ inputField } ).when( (LoadFileInputMeta) runtimeSMI ).getInputFields();
-    stepLoadFileInput.data.nrInputFields = 1;
-    RowMetaInterface mockedRowMetaInterface = mock( RowMetaInterface.class );
-    stepLoadFileInput.data.outputRowMeta = mockedRowMetaInterface;
-    stepLoadFileInput.data.convertRowMeta = mockedRowMetaInterface;
-    Mockito.doReturn( new ValueMetaString() ).when( mockedRowMetaInterface ).getValueMeta( anyInt() );
-
+  @Test
+  public void testUTF8Encoding() throws KettleException, FileSystemException {
     stepMetaInterface.setIncludeFilename( true );
     stepMetaInterface.setFilenameField( "filename" );
     stepMetaInterface.setIncludeRowNumber( true );
@@ -285,43 +316,65 @@ public class LoadFileInputTest {
     stepMetaInterface.setRootUriField( "root uri" );
 
     // string with UTF-8 encoding
-    stepInputFiles.addFile( getFile( "UTF-8.txt" ) );
     ( (LoadFileInputMeta) runtimeSMI ).setEncoding( "UTF-8" );
+    stepInputFiles.addFile( getFile( "UTF-8.txt" ) );
     Object[] result = stepLoadFileInput.getOneRow();
     assertEquals( " UTF-8 string ÕÕÕ€ ", result[0] );
-    assertEquals( new Long( 1 ), result[2] );
+    assertEquals( 1L, result[2] );
     assertEquals( "UTF-8.txt", result[3] );
     assertEquals( "txt", result[4] );
     assertEquals( false, result[6] );
     assertEquals( getFile( "UTF-8.txt" ).getURL().toString(), result[8] );
     assertEquals( getFile( "UTF-8.txt" ).getName().getRootURI(), result[9] );
+  }
 
-    // string with UTF-8 encoding - trail left
+  @Test
+  public void testUTF8TrimLeft() throws KettleException {
+    ( (LoadFileInputMeta) runtimeSMI ).setEncoding( "UTF-8" );
     inputField.setTrimType( ValueMetaInterface.TRIM_TYPE_LEFT );
     stepInputFiles.addFile( getFile( "UTF-8.txt" ) );
     assertEquals( "UTF-8 string ÕÕÕ€ ", stepLoadFileInput.getOneRow()[0] );
+  }
 
-    // string with UTF-8 encoding - trail right
+  @Test
+  public void testUTF8TrimRight() throws KettleException {
+    ( (LoadFileInputMeta) runtimeSMI ).setEncoding( "UTF-8" );
     inputField.setTrimType( ValueMetaInterface.TRIM_TYPE_RIGHT );
     stepInputFiles.addFile( getFile( "UTF-8.txt" ) );
     assertEquals( " UTF-8 string ÕÕÕ€", stepLoadFileInput.getOneRow()[0] );
+  }
 
-    // string with UTF-8 encoding - trail both
+  @Test
+  public void testUTF8Trim() throws KettleException {
+    ( (LoadFileInputMeta) runtimeSMI ).setEncoding( "UTF-8" );
     inputField.setTrimType( ValueMetaInterface.TRIM_TYPE_BOTH );
     stepInputFiles.addFile( getFile( "UTF-8.txt" ) );
     assertEquals( "UTF-8 string ÕÕÕ€", stepLoadFileInput.getOneRow()[0] );
+  }
 
-    // string with Windows-1252 encoding
+  @Test
+  public void testWindowsEncoding() throws KettleException {
+    ( (LoadFileInputMeta) runtimeSMI ).setEncoding( "Windows-1252" );
     inputField.setTrimType( ValueMetaInterface.TRIM_TYPE_NONE );
     stepInputFiles.addFile( getFile( "Windows-1252.txt" ) );
-    ( (LoadFileInputMeta) runtimeSMI ).setEncoding( "Windows-1252" );
     assertEquals( " Windows-1252 string ÕÕÕ€ ", stepLoadFileInput.getOneRow()[0] );
+  }
 
+  @Test
+  public void testWithNoEncoding() throws KettleException, UnsupportedEncodingException {
     // string with Windows-1252 encoding but with no encoding set
-    stepInputFiles.addFile( getFile( "Windows-1252.txt" ) );
     ( (LoadFileInputMeta) runtimeSMI ).setEncoding( null );
+    stepInputFiles.addFile( getFile( "Windows-1252.txt" ) );
     assertNotEquals( " Windows-1252 string ÕÕÕ€ ", stepLoadFileInput.getOneRow()[0] );
     assertEquals( " Windows-1252 string ÕÕÕ€ ", new String( stepLoadFileInput.data.filecontent, "Windows-1252" ) );
+  }
+
+  @Test
+  public void testByteArray() throws Exception {
+    RowMetaInterface mockedRowMetaInterface = mock( RowMetaInterface.class );
+    stepLoadFileInput.data.outputRowMeta = mockedRowMetaInterface;
+    stepLoadFileInput.data.convertRowMeta = mockedRowMetaInterface;
+    Mockito.doReturn( new ValueMetaString() ).when( mockedRowMetaInterface ).getValueMeta( anyInt() );
 
     // byte array
     Mockito.doReturn( new ValueMetaBinary() ).when( mockedRowMetaInterface ).getValueMeta( anyInt() );

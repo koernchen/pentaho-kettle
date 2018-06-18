@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2017-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -46,7 +46,7 @@ public class ValueMetaConverterTest {
   private static final int endSource = 10;
   private static final int startTarget = 1;
   private static final int endTarget = 10;
-  private static final boolean IS_VERBOSE = true; //Change to true to display information
+  private static final boolean IS_VERBOSE = false; //Change to true to display information
 
   @Test
   public void convertFromSourceToTargetDataTypeTest() throws Exception {
@@ -55,7 +55,7 @@ public class ValueMetaConverterTest {
     DateFormat dateFormat = new SimpleDateFormat( "yyyy/MM/dd HH:mm:ss.SSS" );
     Date date1 = ( dateFormat.parse( "1999/12/31 00:00:00.000" ) );
     Date timeStamp1 = new Timestamp( dateFormat.parse( "2001/11/01 20:30:15.123" ).getTime() );
-    final String inetHost = "www.microsoft.com";
+    final String inetHost = "127.0.0.1";
     InetAddress inetAddress1 = InetAddress.getByName( inetHost );
 
     //All combination not listed here should generate ValueMetaConversionExceptions
@@ -64,6 +64,7 @@ public class ValueMetaConverterTest {
       { ValueMetaInterface.TYPE_NUMBER, ValueMetaInterface.TYPE_NONE, 1234.56d, null },
       { ValueMetaInterface.TYPE_NUMBER, ValueMetaInterface.TYPE_STRING, 1234.56d, "1234.56" },
       { ValueMetaInterface.TYPE_NUMBER, ValueMetaInterface.TYPE_NUMBER, 1234.56d, 1234.56d },
+      { ValueMetaInterface.TYPE_NUMBER, ValueMetaInterface.TYPE_INTEGER, 1234.56d, 1234L },
       { ValueMetaInterface.TYPE_NUMBER, ValueMetaInterface.TYPE_BIGNUMBER, 1234.56d, new BigDecimal( 1234.56 ) },
 
       { ValueMetaInterface.TYPE_STRING, ValueMetaInterface.TYPE_NONE, inetHost, null },
@@ -89,10 +90,12 @@ public class ValueMetaConverterTest {
       { ValueMetaInterface.TYPE_BOOLEAN, ValueMetaInterface.TYPE_BOOLEAN, true, true },
 
       { ValueMetaInterface.TYPE_INTEGER, ValueMetaInterface.TYPE_NONE, 1234L, null },
+      { ValueMetaInterface.TYPE_INTEGER, ValueMetaInterface.TYPE_DATE, date1.getTime(), date1 },
       { ValueMetaInterface.TYPE_INTEGER, ValueMetaInterface.TYPE_STRING, 1234L, "1234" },
       { ValueMetaInterface.TYPE_INTEGER, ValueMetaInterface.TYPE_INTEGER, 1234L, 1234L },
       { ValueMetaInterface.TYPE_INTEGER, ValueMetaInterface.TYPE_NUMBER, 1234L, 1234.0 },
       { ValueMetaInterface.TYPE_INTEGER, ValueMetaInterface.TYPE_BIGNUMBER, 1234L, new BigDecimal( "1234" ) },
+      { ValueMetaInterface.TYPE_INTEGER, ValueMetaInterface.TYPE_TIMESTAMP, timeStamp1.getTime(), timeStamp1 },
 
       { ValueMetaInterface.TYPE_BIGNUMBER, ValueMetaInterface.TYPE_NONE, new BigDecimal( "123456.123456" ), null },
       { ValueMetaInterface.TYPE_BIGNUMBER, ValueMetaInterface.TYPE_STRING, new BigDecimal( "123456.123456" ),
@@ -165,7 +168,7 @@ public class ValueMetaConverterTest {
 
         //Now Try to send in a source that is an invalid type - should always fail
         try {
-          converter.convertFromSourceToTargetDataType( sourceType, targetType, new ValueMetaConverter() );
+          converter.convertFromSourceToTargetDataType( sourceType, targetType, new Object() );
         } catch ( ValueMetaConversionException e ) {
           // We are expecting this exception.  Any combination we are not testing should not be supported
           if ( !e.getMessage().contains( "Error.  Expecting value of type" ) ) {

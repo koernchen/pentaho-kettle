@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -106,6 +106,9 @@ public class KettleURLClassLoader extends URLClassLoader {
       return loadClassFromThisLoader( arg0, arg1 );
     } catch ( ClassNotFoundException | NoClassDefFoundError e ) {
       // ignore
+    } catch ( SecurityException e ) {
+      System.err.println( BaseMessages.getString( PKG, "KettleURLClassLoader.Exception.UnableToLoadClass",
+              e.toString() ) );
     }
 
     return loadClassFromParent( arg0, arg1 );
@@ -175,7 +178,7 @@ public class KettleURLClassLoader extends URLClassLoader {
   }
 
   /**
-   * This method is designed to clear out classloader file locks in windows.
+   * This method is designed to shutdown out classloader file locks in windows.
    */
   public void closeClassLoader() {
     HashSet<String> closedFiles = new HashSet<>();

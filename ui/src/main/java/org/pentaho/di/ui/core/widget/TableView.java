@@ -3,7 +3,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -33,7 +33,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.eclipse.jface.fieldassist.ControlDecoration;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.SWTException;
 import org.eclipse.swt.custom.CCombo;
@@ -94,6 +93,7 @@ import org.pentaho.di.core.row.RowMetaInterface;
 import org.pentaho.di.core.row.ValueMetaInterface;
 import org.pentaho.di.core.row.value.ValueMetaFactory;
 import org.pentaho.di.core.row.value.ValueMetaInteger;
+import org.pentaho.di.core.row.value.ValueMetaNumber;
 import org.pentaho.di.core.row.value.ValueMetaString;
 import org.pentaho.di.core.undo.TransAction;
 import org.pentaho.di.core.variables.VariableSpace;
@@ -159,7 +159,6 @@ public class TableView extends Composite {
   private boolean sortable;
   private int lastRowCount;
   private boolean fieldChanged;
-  private boolean insertImage;
 
   private Menu mRow;
 
@@ -188,7 +187,6 @@ public class TableView extends Composite {
   protected int textWidgetCaretPosition;
 
   private VariableSpace variables;
-  private ControlDecoration controlDecoration;
 
   private boolean showingBlueNullValues;
   private boolean showingConversionErrorsInline;
@@ -229,11 +227,11 @@ public class TableView extends Composite {
 
   public TableView( VariableSpace space, Composite parent, int style, ColumnInfo[] columnInfo, int nrRows,
       boolean readOnly, ModifyListener lsm, PropsUI pr, final boolean addIndexColumn ) {
-    this( space, parent, style, columnInfo, nrRows, readOnly, lsm, pr, addIndexColumn, false, null );
+    this( space, parent, style, columnInfo, nrRows, readOnly, lsm, pr, addIndexColumn, null );
   }
 
   public TableView( VariableSpace space, Composite parent, int style, ColumnInfo[] columnInfo, int nrRows,
-      boolean readOnly, ModifyListener lsm, PropsUI pr, final boolean addIndexColumn, final boolean insertImage, Listener lsnr ) {
+      boolean readOnly, ModifyListener lsm, PropsUI pr, final boolean addIndexColumn, Listener lsnr ) {
     super( parent, SWT.NO_BACKGROUND | SWT.NO_FOCUS | SWT.NO_MERGE_PAINTS | SWT.NO_RADIO_GROUP );
     this.parent = parent;
     this.columns = columnInfo;
@@ -243,7 +241,6 @@ public class TableView extends Composite {
     this.clipboard = null;
     this.variables = space;
     this.addIndexColumn = addIndexColumn;
-    this.insertImage = insertImage;
     this.lsFocusInTabItem = lsnr;
 
     sortfield = 0;
@@ -265,8 +262,8 @@ public class TableView extends Composite {
     clearUndo();
 
     numberColumn = new ColumnInfo( "#", ColumnInfo.COLUMN_TYPE_TEXT, true, true );
-    ValueMetaInterface numberColumnValueMeta = new ValueMetaInteger( "#" );
-    numberColumnValueMeta.setConversionMask( "####0" );
+    ValueMetaInterface numberColumnValueMeta = new ValueMetaNumber( "#" );
+    numberColumnValueMeta.setConversionMask( "####0.###" );
     numberColumn.setValueMeta( numberColumnValueMeta );
 
     lsUndo = new ModifyListener() {
@@ -295,14 +292,6 @@ public class TableView extends Composite {
 
     // Create table, add columns & rows...
     table = new Table( this, style | SWT.MULTI );
-
-    Image image = GUIResource.getInstance().getImageVariable();
-    if ( insertImage ) {
-      controlDecoration = new ControlDecoration( table, SWT.TOP | SWT.RIGHT );
-      controlDecoration.setImage( image );
-      controlDecoration.setDescriptionText( BaseMessages.getString( PKG, "TextVar.tooltip.InsertVariable" ) );
-    }
-
     props.setLook( table, Props.WIDGET_STYLE_TABLE );
     table.setLinesVisible( true );
 
@@ -1489,7 +1478,6 @@ public class TableView extends Composite {
       table.setSortDirection( sortingDescending ? SWT.DOWN : SWT.UP );
 
       lastRowCount = table.getItemCount();
-      setRowNums();
     } catch ( Exception e ) {
       new ErrorDialog( this.getShell(), BaseMessages.getString( PKG, "TableView.ErrorDialog.title" ), BaseMessages
         .getString( PKG, "TableView.ErrorDialog.description" ), e );
@@ -2374,10 +2362,12 @@ public class TableView extends Composite {
         }
       };
 
-      combo = new ComboVar( variables, table, SWT.SINGLE | SWT.LEFT | SWT.BORDER, null, getCaretPositionInterface, insertTextInterface, !insertImage );
+      combo = new ComboVar( variables, table, SWT.SINGLE | SWT.LEFT | SWT.BORDER, getCaretPositionInterface, insertTextInterface );
       ComboVar widget = (ComboVar) combo;
       if ( lsFocusInTabItem != null ) {
         widget.getCComboWidget().addListener( SWT.FocusIn, lsFocusInTabItem );
+      } else {
+        widget.setItems( opt );
       }
       props.setLook( widget, Props.WIDGET_STYLE_TABLE );
       widget.addTraverseListener( lsTraverse );

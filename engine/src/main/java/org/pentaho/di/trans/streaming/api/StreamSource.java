@@ -2,7 +2,7 @@
  *
  * Pentaho Data Integration
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -23,6 +23,8 @@
 package org.pentaho.di.trans.streaming.api;
 
 
+import io.reactivex.Observable;
+
 /**
  * Defines a source of streaming data.  A StreamSource implementation is used
  * by {@link org.pentaho.di.trans.streaming.common.BaseStreamStep} when
@@ -33,7 +35,7 @@ public interface StreamSource<R>  {
   /**
    * Returns the rows of data as an iterable.
    */
-  Iterable<R> rows();
+  Observable<R> observable();
 
   /**
    * Signals this stream is no longer in use and can clean up
@@ -51,4 +53,9 @@ public interface StreamSource<R>  {
    */
   void resume();
 
+  /**
+   * Open the source for loading rows.
+   * Used for initializing resources required to load the stream.
+   */
+  void open();
 }

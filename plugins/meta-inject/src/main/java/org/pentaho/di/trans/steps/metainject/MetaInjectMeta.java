@@ -22,14 +22,7 @@
 
 package org.pentaho.di.trans.steps.metainject;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-
 import org.pentaho.di.core.Const;
-import org.pentaho.di.core.util.Utils;
 import org.pentaho.di.core.ObjectLocationSpecificationMethod;
 import org.pentaho.di.core.annotations.Step;
 import org.pentaho.di.core.database.DatabaseMeta;
@@ -43,9 +36,11 @@ import org.pentaho.di.core.injection.InjectionSupported;
 import org.pentaho.di.core.row.RowMetaInterface;
 import org.pentaho.di.core.row.value.ValueMetaFactory;
 import org.pentaho.di.core.util.CurrentDirectoryResolver;
+import org.pentaho.di.core.util.Utils;
 import org.pentaho.di.core.variables.VariableSpace;
 import org.pentaho.di.core.xml.XMLHandler;
 import org.pentaho.di.i18n.BaseMessages;
+import org.pentaho.di.repository.HasRepositoryDirectories;
 import org.pentaho.di.repository.ObjectId;
 import org.pentaho.di.repository.Repository;
 import org.pentaho.di.repository.RepositoryDirectory;
@@ -68,6 +63,12 @@ import org.pentaho.di.trans.step.StepMetaInterface;
 import org.pentaho.metastore.api.IMetaStore;
 import org.w3c.dom.Node;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+
 @Step( id = "MetaInject",
     image = "org/pentaho/di/ui/trans/steps/metainject/img/GenericTransform.svg",
     name = "i18n:org.pentaho.di.trans.step:BaseStep.TypeLongDesc.MetaInject",
@@ -75,7 +76,8 @@ import org.w3c.dom.Node;
     documentationUrl = "Products/Data_Integration/Transformation_Step_Reference/ETL_Metadata_Injection" )
 @InjectionSupported( localizationPrefix = "MetaInject.Injection.", groups = { "SOURCE_OUTPUT_FIELDS",
   "MAPPING_FIELDS" } )
-public class MetaInjectMeta extends BaseStepMeta implements StepMetaInterface, StepMetaChangeListenerInterface {
+public class MetaInjectMeta extends BaseStepMeta implements StepMetaInterface, StepMetaChangeListenerInterface,
+  HasRepositoryDirectories {
 
   private static Class<?> PKG = MetaInjectMeta.class; // for i18n purposes, needed by Translator2!!
 
@@ -443,6 +445,16 @@ public class MetaInjectMeta extends BaseStepMeta implements StepMetaInterface, S
     this.directoryPath = directoryPath;
   }
 
+  @Override
+  public String[] getDirectories() {
+    return new String[]{ directoryPath };
+  }
+
+  @Override
+  public void setDirectories( String[] directories ) {
+    this.directoryPath = directories[0];
+  }
+
   /**
    * @return the transObjectId
    */
@@ -467,6 +479,11 @@ public class MetaInjectMeta extends BaseStepMeta implements StepMetaInterface, S
    */
   public ObjectLocationSpecificationMethod getSpecificationMethod() {
     return specificationMethod;
+  }
+
+  @Override
+  public ObjectLocationSpecificationMethod[] getSpecificationMethods() {
+    return new ObjectLocationSpecificationMethod[] { specificationMethod };
   }
 
   /**
@@ -538,29 +555,44 @@ public class MetaInjectMeta extends BaseStepMeta implements StepMetaInterface, S
       case REPOSITORY_BY_NAME:
         String realTransname = tmpSpace.environmentSubstitute( injectMeta.getTransName() );
         String realDirectory = tmpSpace.environmentSubstitute( injectMeta.getDirectoryPath() );
+        if ( rep != null ) {
+          if ( !Utils.isEmpty( realTransname ) && !Utils.isEmpty( realDirectory ) && rep != null ) {
+            RepositoryDirectoryInterface repdir = rep.findDirectory( realDirectory );
+            if ( repdir != null ) {
+              try {
+                // reads the last revision in the repository...
+                //
+                // TODO: FIXME: see if we need to pass external MetaStore references to the repository?
+                //
+                mappingTransMeta = rep.loadTransformation( realTransname, repdir, null, true, null );
 
-        if ( !Utils.isEmpty( realTransname ) && !Utils.isEmpty( realDirectory ) && rep != null ) {
-          RepositoryDirectoryInterface repdir = rep.findDirectory( realDirectory );
-          if ( repdir != null ) {
-            try {
-              // reads the last revision in the repository...
-              //
-              // TODO: FIXME: see if we need to pass external MetaStore references to the repository?
-              //
-              mappingTransMeta = rep.loadTransformation( realTransname, repdir, null, true, null );
-
-              mappingTransMeta.getLogChannel().logDetailed( "Loading Mapping from repository",
-                "Mapping transformation [" + realTransname + "] was loaded from the repository" );
-            } catch ( Exception e ) {
-              throw new KettleException( "Unable to load transformation [" + realTransname + "]", e );
+                mappingTransMeta.getLogChannel().logDetailed( "Loading Mapping from repository",
+                  "Mapping transformation [" + realTransname + "] was loaded from the repository" );
+              } catch ( Exception e ) {
+                throw new KettleException( "Unable to load transformation [" + realTransname + "]", e );
+              }
+            } else {
+              throw new KettleException( BaseMessages.getString( PKG,
+                "MetaInjectMeta.Exception.UnableToLoadTransformationFromRepository", realTransname, realDirectory ) );
             }
-          } else {
-            throw new KettleException( BaseMessages.getString( PKG,
-              "MetaInjectMeta.Exception.UnableToLoadTransformationFromRepository", realTransname, realDirectory ) );
+          }
+        } else {
+          try {
+            mappingTransMeta =
+              new TransMeta( realDirectory + "/" + realTransname, metaStore, rep, true, tmpSpace, null );
+          } catch ( KettleException ke ) {
+            try {
+              // add .ktr extension and try again
+              mappingTransMeta =
+                new TransMeta( realDirectory + "/" + realTransname + "." + Const.STRING_TRANS_DEFAULT_EXT, metaStore,
+                  rep, true, tmpSpace, null );
+            } catch ( KettleException ke2 ) {
+              throw new KettleException( BaseMessages.getString( PKG, "StepWithMappingMeta.Exception.UnableToLoadTrans",
+                realTransname ) + realDirectory );
+            }
           }
         }
         break;
-
       case REPOSITORY_BY_REFERENCE:
         // Read the last revision by reference...
         mappingTransMeta = rep.loadTransformation( injectMeta.getTransObjectId(), null );
@@ -631,10 +663,10 @@ public class MetaInjectMeta extends BaseStepMeta implements StepMetaInterface, S
           metaStore );
 
       // To get a relative path to it, we inject
-      // ${Internal.Transformation.Filename.Directory}
+      // ${Internal.Entry.Current.Directory}
       //
       String newFilename =
-        "${" + Const.INTERNAL_VARIABLE_TRANSFORMATION_FILENAME_DIRECTORY + "}/" + proposedNewFilename;
+        "${" + Const.INTERNAL_VARIABLE_ENTRY_CURRENT_DIRECTORY + "}/" + proposedNewFilename;
 
       // Set the correct filename inside the XML.
       //

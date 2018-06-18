@@ -2,7 +2,7 @@
  *
  * Pentaho Big Data
  *
- * Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ * Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  *******************************************************************************
  *
@@ -26,6 +26,7 @@ import org.pentaho.di.core.row.ValueMetaInterface;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
@@ -40,9 +41,28 @@ import java.util.Date;
  *
  * Created by tkafalas on 12/8/2017.
  */
-public class ValueMetaConverter implements IValueMetaConverter {
+public class ValueMetaConverter implements Serializable, IValueMetaConverter {
   private final String DEFAULT_DATE_FORMAT = ValueMetaBase.DEFAULT_DATE_FORMAT_MASK;
   private SimpleDateFormat datePattern = new SimpleDateFormat( DEFAULT_DATE_FORMAT );
+  private int precision = 0;
+
+  public SimpleDateFormat getDatePattern() {
+    return datePattern;
+  }
+
+  public void setDatePattern( SimpleDateFormat datePattern ) {
+    if ( datePattern != null ) {
+      this.datePattern = datePattern;
+    }
+  }
+
+  public int getPrecision() {
+    return precision;
+  }
+
+  public void setPrecision( int precision ) {
+    this.precision = precision;
+  }
 
   @Override
   public Object convertFromSourceToTargetDataType( int sourceValueMetaType, int targetValueMetaType, Object value )
@@ -65,6 +85,7 @@ public class ValueMetaConverter implements IValueMetaConverter {
       case ValueMetaInterface.TYPE_TIMESTAMP:
         return convertFromTimestampMetaInterface( targetValueMetaType, value );
       case ValueMetaInterface.TYPE_DATE:
+
         return convertFromDateMetaInterface( targetValueMetaType, value );
       case ValueMetaInterface.TYPE_BOOLEAN:
         return convertFromBooleanMetaInterface( targetValueMetaType, value );
@@ -89,6 +110,7 @@ public class ValueMetaConverter implements IValueMetaConverter {
         "Error.  Expecting value of type string.    actual value type = '" + value.getClass() + "'.    value = '"
           + value + "'." );
     }
+    String stringValue = (String) value;
 
     try {
       switch ( targetValueMetaType ) {
@@ -99,21 +121,27 @@ public class ValueMetaConverter implements IValueMetaConverter {
             return null;
           }
         case ValueMetaInterface.TYPE_STRING:
-          return new String( (String) value );
+          return new String( stringValue );
         case ValueMetaInterface.TYPE_INTEGER:
-          return Long.parseLong( (String) value );
+          return Long.parseLong( stripDecimal( stringValue ) );
         case ValueMetaInterface.TYPE_NUMBER:
-          return Double.parseDouble( (String) value );
+          Double doubleValue = Double.parseDouble( stringValue );
+          if ( getPrecision() > 0 ) {
+            BigDecimal bigDecimal = new BigDecimal( doubleValue );
+            bigDecimal = bigDecimal.setScale( getPrecision(), RoundingMode.HALF_UP );
+            doubleValue = bigDecimal.doubleValue();
+          }
+          return doubleValue;
         case ValueMetaInterface.TYPE_BIGNUMBER:
-          return new BigDecimal( ( (String) value ) );
+          return new BigDecimal( stringValue );
         case ValueMetaInterface.TYPE_TIMESTAMP:
-          return new Timestamp( ( datePattern.parse( (String) value ) ).getTime() );
+          return new Timestamp( ( datePattern.parse( stringValue ) ).getTime() );
         case ValueMetaInterface.TYPE_DATE:
-          return datePattern.parse( (String) value );
+          return datePattern.parse( stringValue );
         case ValueMetaInterface.TYPE_BOOLEAN:
-          return Boolean.parseBoolean( (String) value );
+          return Boolean.parseBoolean( stringValue );
         case ValueMetaInterface.TYPE_BINARY:
-          return ( (String) value ).getBytes();
+          return stringValue.getBytes();
         default:
           throwBadConversionCombination( ValueMetaInterface.TYPE_STRING, targetValueMetaType, value );
       }
@@ -174,7 +202,15 @@ public class ValueMetaConverter implements IValueMetaConverter {
         case ValueMetaInterface.TYPE_STRING:
           return Double.toString( (Double) value );
         case ValueMetaInterface.TYPE_NUMBER:
-          return new Double( (Double) value );
+          Double doubleValue = new Double( (Double) value );
+          if ( getPrecision() > 0 ) {
+            BigDecimal bigDecimal = new BigDecimal( doubleValue );
+            bigDecimal = bigDecimal.setScale( getPrecision(), RoundingMode.HALF_UP );
+            doubleValue = bigDecimal.doubleValue();
+          }
+          return doubleValue;
+        case ValueMetaInterface.TYPE_INTEGER:
+          return ( (Double) value ).longValue();
         case ValueMetaInterface.TYPE_BIGNUMBER:
           return new BigDecimal( (Double) value );
         default:
@@ -235,11 +271,21 @@ public class ValueMetaConverter implements IValueMetaConverter {
         case ValueMetaInterface.TYPE_INTEGER:
           return new Long( (Long) value );
         case ValueMetaInterface.TYPE_NUMBER:
-          return ( (Long) value ).doubleValue();
+          Double doubleValue = ( (Long) value ).doubleValue();
+          if ( getPrecision() > 0 ) {
+            BigDecimal bigDecimal = new BigDecimal( doubleValue );
+            bigDecimal = bigDecimal.setScale( getPrecision(), RoundingMode.HALF_UP );
+            doubleValue = bigDecimal.doubleValue();
+          }
+          return doubleValue;
         case ValueMetaInterface.TYPE_BIGNUMBER:
           return new BigDecimal( ( (Long) value ).doubleValue() );
+        case ValueMetaInterface.TYPE_DATE:
+          return new Date( (long) value );
+        case ValueMetaInterface.TYPE_TIMESTAMP:
+          return new Timestamp( (long) value );
         default:
-          throwBadConversionCombination( ValueMetaInterface.TYPE_NUMBER, targetValueMetaType, value );
+          throwBadConversionCombination( ValueMetaInterface.TYPE_INTEGER, targetValueMetaType, value );
       }
     } catch ( Exception e ) {
       throwErroredConversion( ValueMetaInterface.TYPE_INTEGER, targetValueMetaType, value, e );
@@ -266,7 +312,13 @@ public class ValueMetaConverter implements IValueMetaConverter {
         case ValueMetaInterface.TYPE_STRING:
           return value.toString();
         case ValueMetaInterface.TYPE_NUMBER:
-          return ( (BigDecimal) value ).doubleValue();
+          Double doubleValue = ( (BigDecimal) value ).doubleValue();
+          if ( getPrecision() > 0 ) {
+            BigDecimal bigDecimal = new BigDecimal( doubleValue );
+            bigDecimal = bigDecimal.setScale( getPrecision(), RoundingMode.HALF_UP );
+            doubleValue = bigDecimal.doubleValue();
+          }
+          return doubleValue;
         case ValueMetaInterface.TYPE_BIGNUMBER:
           return new BigDecimal( ( (BigDecimal) value ).toString() );
         default:
@@ -428,6 +480,11 @@ public class ValueMetaConverter implements IValueMetaConverter {
   private void handleConversionError( String errorMessage, Exception e ) throws ValueMetaConversionException {
     throw new ValueMetaConversionException( errorMessage, e );
     //      TODO - log an error message to let the user know there's a problem.  For now, return null
+  }
+
+  private String stripDecimal( String s ) {
+    int decimalPosition = s.indexOf( "." );
+    return decimalPosition != -1 ? s.substring( 0, decimalPosition ) : s;
   }
 }
 

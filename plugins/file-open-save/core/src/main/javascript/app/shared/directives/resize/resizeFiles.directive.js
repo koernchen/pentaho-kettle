@@ -1,5 +1,5 @@
 /*!
- * Copyright 2017 Hitachi Vantara. All rights reserved.
+ * Copyright 2017-2018 Hitachi Vantara. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,10 +30,9 @@ define([
       link: function(scope, element, attrs) {
         var scrollClass = "";
         $timeout(function() {
-          scrollClass = $state.is("save") ? "scrollTableOpen" : "scrollTableSave";
+          scrollClass = $state.is("save") ? "scrollTableSave" : "scrollTableOpen";
         });
 
-        var needsTimeout = true;
         var table = angular.element(element[0].querySelector("#filesTableBody"));
         var bodyWrapper = angular.element(element[0].querySelector("#bodyWrapper"));
         var headerWrapper = angular.element(document.querySelector("#headerWrapper"));
@@ -41,26 +40,18 @@ define([
 
         scope.$watch(attrs.resizeFiles, function(newValue, oldValue) {
           if (newValue !== oldValue) {
-            if (needsTimeout) {
-              needsTimeout = false;
-              $timeout(function() {
-                setScrollTableClass();
-                setWidths();
-              });
-            } else {
+            $timeout(function() {
               setScrollTableClass();
               setWidths();
-            }
+            }, 1);
           }
         });
 
         scope.$watch(attrs.searchValue, function(newValue) {
-          if (newValue === "") {
-            $timeout(function() {
-              setScrollTableClass();
-              setWidths();
-            });
-          }
+          $timeout(function() {
+            setScrollTableClass();
+            setWidths();
+          });
         });
 
         scope.$watch(attrs.selectedFile, function(newValue) {
@@ -77,7 +68,6 @@ define([
          */
         function setScrollTableClass() {
           if (scope.vm.folder.name === "Recents" && scope.vm.folder.path === "Recents") {
-            needsTimeout = true;
             return;
           }
           bodyWrapper.css("height", "calc(100% - 31px)");

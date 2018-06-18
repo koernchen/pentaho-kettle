@@ -3,7 +3,7 @@
  *
  *  Pentaho Data Integration
  *
- *  Copyright (C) 2002-2017 by Hitachi Vantara : http://www.pentaho.com
+ *  Copyright (C) 2002-2018 by Hitachi Vantara : http://www.pentaho.com
  *
  * ******************************************************************************
  *
@@ -79,7 +79,6 @@ public class TransWebSocketEngineAdapter extends Trans {
   private static final String TRANSFORMATION_STATUS = "TRANSFORMATION_STATUS_TRANS_WEBSOCK";
   private static final String TRANSFORMATION_ERROR = "TRANSFORMATION_ERROR_TRANS_WEBSOCK";
   private static final String TRANSFORMATION_STOP = "TRANSFORMATION_STOP_TRANS_WEBSOCK";
-  private static final String SPARK_SESSION_KILLED_MSG = "Spark session was killed";
 
   //session monitor properties
   private static final int SLEEP_TIME_MS = 10000;
@@ -95,6 +94,7 @@ public class TransWebSocketEngineAdapter extends Trans {
   private final String host;
   private final String port;
   private final boolean ssl;
+  private boolean cancelling = false;
 
   //completion signal used to wait until Transformation is finished
   private CountDownLatch transFinishedSignal = new CountDownLatch( 1 );
@@ -144,6 +144,7 @@ public class TransWebSocketEngineAdapter extends Trans {
 
   @Override public void stopAll() {
     try {
+      cancelling = true;
       getDaemonEndpoint().sendMessage( new StopMessage( getErrors() == 0 ? "User Request" : "Error reported" ) );
       if ( getErrors() == 0 ) {
         waitUntilFinished();
@@ -151,6 +152,8 @@ public class TransWebSocketEngineAdapter extends Trans {
       }
     } catch ( KettleException e ) {
       getLogChannel().logDebug( e.getMessage() );
+    } finally {
+      cancelling = false;
     }
   }
 
@@ -306,17 +309,19 @@ public class TransWebSocketEngineAdapter extends Trans {
       .addHandler( Util.getStopMessage(), new MessageEventHandler() {
         @Override
         public void execute( Message message ) throws MessageEventHandlerExecutionException {
-          String stopMessage = ((StopMessage) message ).getReasonPhrase();
-          if ( SPARK_SESSION_KILLED_MSG.equals( stopMessage ) ) {
-            errors.incrementAndGet();
-            getLogChannel().logError( "Finalizing execution: " + stopMessage );
+          StopMessage stopMessage = (StopMessage) message;
+
+          if ( stopMessage.sessionWasKilled() || stopMessage.operationFailed() ) {
+            getLogChannel().logError( "Finalizing execution: " + stopMessage.getReasonPhrase() );
           } else {
-            getLogChannel().logBasic( "Finalizing execution: " + stopMessage );
+            getLogChannel().logBasic( "Finalizing execution: " + stopMessage.getReasonPhrase() );
           }
 
-          finishProcess( false );
+          if ( !cancelling ) {
+            finishProcess( false );
+          }
           try {
-            getDaemonEndpoint().close( stopMessage );
+            getDaemonEndpoint().close( stopMessage.getReasonPhrase() );
           } catch ( KettleException e ) {
             getLogChannel().logError( "Error finalizing", e );
           }
@@ -399,7 +404,9 @@ public class TransWebSocketEngineAdapter extends Trans {
             errors.incrementAndGet();
             getLogChannel().logError(
               "Session Monitor detected that communication with the server was lost. Finalizing execution." );
-            finishProcess( false );
+            if ( !cancelling ) {
+              finishProcess( false );
+            }
             // Signal for the the waitUntilFinished blocker...
             transFinishedSignal.countDown();
           } else {

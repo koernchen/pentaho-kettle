@@ -18,7 +18,7 @@
 
   <properties>
     <!-- Test running configuration -->
-    <maven-surefire-plugin.reuseForks>false</maven-surefire-plugin.reuseForks>
+    <maven-surefire-plugin.reuseForks>true</maven-surefire-plugin.reuseForks>
     <maven-failsafe-plugin.reuseForks>false</maven-failsafe-plugin.reuseForks>
     <!-- jackson-databind depends on jackson-core and jackson-annotations
 	so that this artifacts have the same version to prevent compile errors -->
@@ -37,7 +37,7 @@
         <module>log4j</module>
       </modules>
     </profile>
-  
+
     <profile>
       <id>highdeps</id>
       <activation>
@@ -51,7 +51,7 @@
         <module>repositories</module>
         <module>meta-inject</module>
         <module>engine-configuration</module>
-        <module>get-previous-row-field</module> 
+        <module>get-previous-row-field</module>
         <module>aggregate-rows</module>
         <module>elasticsearch-bulk-insert</module>
         <module>google-analytics</module>
@@ -71,10 +71,11 @@
         <module>lucid-db-streaming-loader</module>
         <module>salesforce</module>
         <module>pur</module>
-        <module>ms-access-bulk-loader</module>
+        <module>ms-access</module>
         <module>xml</module>
+        <module>streaming</module>
       </modules>
     </profile>
-    
+
   </profiles>
 </project>
